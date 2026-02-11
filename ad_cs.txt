@@ -1,0 +1,351 @@
+/* Tab-Specific Color Classes */
+.text-primary {
+  color: hsl(var(--primary));
+}
+.text-muted-foreground {
+  color: hsl(var(--muted-foreground));
+}
+.text-load {
+  color: hsl(var(--color-load));
+}
+.text-load-dark {
+  color: hsl(var(--color-load-dark));
+}
+.text-schema {
+  color: hsl(var(--color-schema));
+}
+.text-schema-dark {
+  color: hsl(var(--color-schema-dark));
+}
+.text-fileload {
+  color: hsl(var(--color-fileload));
+}
+.text-fileload-dark {
+  color: hsl(var(--color-fileload-dark));
+}
+.text-filedownload {
+  color: hsl(var(--color-filedownload));
+}
+.text-filedownload-dark {
+  color: hsl(var(--color-filedownload-dark));
+}
+
+.from-card {
+  --gradient-start: hsl(var(--card));
+}
+.to-primary\/5 {
+  --gradient-end: hsl(var(--primary) / 0.05);
+}
+.to-load\/5 {
+  --gradient-end: hsl(var(--color-load) / 0.05);
+}
+.to-schema\/5 {
+  --gradient-end: hsl(var(--color-schema) / 0.05);
+}
+.to-fileload\/5 {
+  --gradient-end: hsl(var(--color-fileload) / 0.05);
+}
+.to-filedownload\/5 {
+  --gradient-end: hsl(var(--color-filedownload) / 0.05);
+}
+.to-accent\/5 {
+  --gradient-end: hsl(var(--accent) / 0.05);
+}
+
+/* Border Classes */
+.border-t-primary {
+  border-top-color: hsl(var(--primary));
+}
+.border-t-load {
+  border-top-color: hsl(var(--color-load));
+}
+.border-t-schema {
+  border-top-color: hsl(var(--color-schema));
+}
+.border-t-fileload {
+  border-top-color: hsl(var(--color-fileload));
+}
+.border-t-filedownload {
+  border-top-color: hsl(var(--color-filedownload));
+}
+
+.border-primary\/20 {
+  border-color: hsl(var(--primary) / 0.2);
+}
+.border-primary\/30 {
+  border-color: hsl(var(--primary) / 0.3);
+}
+.border-accent\/30 {
+  border-color: hsl(var(--accent) / 0.3);
+}
+.border-2 {
+  border-width: 2px;
+}
+.border-dashed {
+  border-style: dashed;
+}
+
+/* Text Gradient Classes */
+.text-gradient {
+  background: linear-gradient(
+    135deg,
+    hsl(var(--primary)) 0%,
+    hsl(var(--primary)) 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.text-gradient-load {
+  background: linear-gradient(
+    to right,
+    hsl(var(--color-load)) 0%,
+    hsl(var(--color-load-light)) 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.text-gradient-schema {
+  background: linear-gradient(
+    to right,
+    hsl(var(--color-schema)) 0%,
+    hsl(var(--color-schema-light)) 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.text-gradient-fileload {
+  background: linear-gradient(
+    to right,
+    hsl(var(--color-fileload)) 0%,
+    hsl(var(--color-fileload-light)) 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.text-gradient-filedownload {
+  background: linear-gradient(
+    to right,
+    hsl(var(--color-filedownload)) 0%,
+    hsl(var(--color-filedownload-light)) 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* Shadow Classes */
+.hover-shadow-xl:hover {
+  box-shadow:
+    0 20px 25px -5px rgba(0, 0, 0, 0.1),
+    0 8px 10px -6px rgba(0, 0, 0, 0.1);
+}
+
+.shadow-load {
+  box-shadow: 0 10px 30px -5px hsl(var(--color-load) / 0.2);
+}
+
+.hover-shadow-load-xl:hover {
+  box-shadow: 0 20px 40px -5px hsl(var(--color-load) / 0.3);
+}
+
+.shadow-schema {
+  box-shadow: 0 10px 30px -5px hsl(var(--color-schema) / 0.2);
+}
+
+.hover-shadow-schema-xl:hover {
+  box-shadow: 0 20px 40px -5px hsl(var(--color-schema) / 0.3);
+}
+
+.shadow-fileload {
+  box-shadow: 0 10px 30px -5px hsl(var(--color-fileload) / 0.2);
+}
+
+.hover-shadow-fileload-xl:hover {
+  box-shadow: 0 20px 40px -5px hsl(var(--color-fileload) / 0.3);
+}
+
+.shadow-filedownload {
+  box-shadow: 0 10px 30px -5px hsl(var(--color-filedownload) / 0.2);
+}
+
+.hover-shadow-filedownload-xl:hover {
+  box-shadow: 0 20px 40px -5px hsl(var(--color-filedownload) / 0.3);
+}
+
+/* Feature Box Styles */
+.feature-box {
+  position: relative;
+  overflow: hidden;
+  padding: 1.5rem;
+  border-radius: 0.75rem;
+  border: 2px solid;
+  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
+  margin-bottom: 1.5rem;
+}
+
+.feature-box-primary {
+  background: linear-gradient(
+    to bottom right,
+    hsl(var(--primary) / 0.08),
+    hsl(var(--primary) / 0.05),
+    hsl(var(--accent) / 0.05)
+  );
+  border-color: hsl(var(--primary) / 0.2);
+}
+
+.feature-box-load {
+  background: linear-gradient(
+    to bottom right,
+    hsl(var(--color-load) / 0.08),
+    hsl(var(--color-load) / 0.05),
+    hsl(var(--color-load-light) / 0.08)
+  );
+  border-color: hsl(var(--color-load) / 0.2);
+}
+
+.feature-box-schema {
+  background: linear-gradient(
+    to bottom right,
+    hsl(var(--color-schema) / 0.08),
+    hsl(var(--color-schema) / 0.05),
+    hsl(var(--color-schema-light) / 0.08)
+  );
+  border-color: hsl(var(--color-schema) / 0.2);
+}
+
+.feature-box-fileload {
+  background: linear-gradient(
+    to bottom right,
+    hsl(var(--color-fileload) / 0.08),
+    hsl(var(--color-fileload) / 0.05),
+    hsl(var(--color-fileload-light) / 0.08)
+  );
+  border-color: hsl(var(--color-fileload) / 0.2);
+}
+
+.feature-box-filedownload {
+  background: linear-gradient(
+    to bottom right,
+    hsl(var(--color-filedownload) / 0.08),
+    hsl(var(--color-filedownload) / 0.05),
+    hsl(var(--color-filedownload-light) / 0.08)
+  );
+  border-color: hsl(var(--color-filedownload) / 0.2);
+}
+
+.feature-blur-decoration {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 8rem;
+  height: 8rem;
+  background: currentColor;
+  opacity: 0.1;
+  border-radius: 9999px;
+  filter: blur(3rem);
+}
+
+/* Animation Classes */
+@keyframes slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.animate-slide-up {
+  animation: slide-up 0.4s ease-out;
+}
+
+.animate-scale-in {
+  animation: scale-in 0.3s ease-out;
+}
+
+/* Utility Classes */
+.relative {
+  position: relative;
+}
+.z-10 {
+  z-index: 10;
+}
+.z-50 {
+  z-index: 50;
+}
+.items-start {
+  align-items: flex-start;
+}
+.gap-2 {
+  gap: 0.5rem;
+}
+.gap-3 {
+  gap: 0.75rem;
+}
+.gap-8 {
+  gap: 2rem;
+}
+.space-x-3 > * + * {
+  margin-left: 0.75rem;
+}
+.cursor-pointer {
+  cursor: pointer;
+}
+.h-12 {
+  height: 3rem;
+}
+.h-5 {
+  height: 1.25rem;
+}
+.w-5 {
+  width: 1.25rem;
+}
+.p-6 {
+  padding: 1.5rem;
+}
+.rounded-xl {
+  border-radius: 0.75rem;
+}
+.transition-colors {
+  transition-property: color, background-color, border-color;
+  transition-duration: 200ms;
+}
+.hover-border-primary:hover {
+  border-color: hsl(var(--primary));
+}
+.group-hover-text-primary:hover {
+  color: hsl(var(--primary));
+}
+
+/* Enhanced Form Styles */
+.form-select:hover {
+  border-color: hsl(var(--muted));
+}
+
+/* Card Elevated Enhancement */
+.card-elevated {
+  box-shadow:
+    0 4px 6px -1px rgba(0, 0, 0, 0.1),
+    0 2px 4px -2px rgba(0, 0, 0, 0.1);
+}
