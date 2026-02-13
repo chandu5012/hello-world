@@ -1,0 +1,337 @@
+// File Compare Form Generation and Handling Functions
+
+// Generate file configuration fields
+function generateFileConfig(prefix) {
+  return `
+        <div class="source-target-card border-t-4 border-t-blue-500 shadow-elevated">
+            <div class="card-header gradient-header">
+                <h3 class="text-blue-700 flex items-center gap-2">
+                    <div class="w-3 h-3 bg-blue-500 rounded-full"></div>
+                    ${
+                      prefix.includes("source") || prefix.includes("Source")
+                        ? "Source"
+                        : "Target"
+                    } File Configuration
+                </h3>
+                <p>Configure your file details for comparison</p>
+            </div>
+            <div class="config-content p-6 space-y-4">
+                <div class="form-group">
+                    <label for="${prefix}FileType" class="block text-sm font-medium mb-2">📄 File Type</label>
+                    <select id="${prefix}FileType" class="form-select w-full p-3 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:ring-2 focus:ring-blue-200">
+                        <option value="">Select file type</option>
+                        <option value="CSV">CSV</option>
+                        <option value="Excel">Excel</option>
+                        <option value="JSON">JSON</option>
+                        <option value="Parquet">Parquet</option>
+                        <option value="XML">XML</option>
+                        <option value="Dat">Dat or txt file with Delimiter</option>
+                    </select>
+                </div>
+                
+                <div id="${prefix}DelimiterContainer" class="form-group hidden">
+                    <label for="${prefix}Delimiter" class="block text-sm font-medium mb-2">📝 Delimiter</label>
+                    <input type="text" id="${prefix}Delimiter" class="form-input w-full p-3 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:ring-2 focus:ring-blue-200" placeholder="Enter delimiter (e.g., comma, pipe, tab)" maxlength="10">
+                </div>
+                
+                <div class="form-group">
+                    <label for="${prefix}FileLocation" class="block text-sm font-medium mb-2">📍 File Location Type</label>
+                    <select id="${prefix}FileLocation" class="form-select w-full p-3 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:ring-2 focus:ring-blue-200">
+                        <option value="">Select location type</option>
+                        <option value="local">Local File</option>
+                        <option value="hadoop">Hadoop File</option>
+                        <option value="upload">Upload file from system</option>
+                    </select>
+                </div>
+                
+                <div id="${prefix}FilePathContainer" class="form-group">
+                    <label for="${prefix}FilePath" class="block text-sm font-medium mb-2">📂 File Path</label>
+                    <input type="text" id="${prefix}FilePath" class="form-input w-full p-3 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:ring-2 focus:ring-blue-200" placeholder="Enter full file path" maxlength="500">
+                </div>
+                
+                <div id="${prefix}FileUploadContainer" class="form-group hidden">
+                    <label for="${prefix}FileUpload" class="block text-sm font-medium mb-2">📤 Upload File</label>
+                    <input type="file" id="${prefix}FileUpload" class="form-input w-full p-3 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:ring-2 focus:ring-blue-200">
+                </div>
+                
+                <div class="form-group">
+                    <label for="${prefix}SqlQuery" class="block text-sm font-medium mb-2">📝 SQL Query (Optional)</label>
+                    <textarea id="${prefix}SqlQuery" class="form-textarea w-full p-3 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:ring-2 focus:ring-blue-200" rows="3" placeholder="Enter custom SQL query (optional)"></textarea>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+// Generate File Compare Form
+function generateFileCompareForm() {
+  console.log("Generating file compare form...");
+  const container = document.getElementById("filecompare-form");
+  if (!container) {
+    console.error("filecompare-form container not found!");
+    return;
+  }
+
+  container.innerHTML = `
+        <div class="mb-6 p-4 border rounded-lg bg-gray-50">
+            <label class="text-base font-semibold mb-3 block">Comparison Type</label>
+            <div class="radio-group flex gap-6" id="filecompare-type-selection">
+                <div class="flex items-center space-x-2">
+                    <input type="radio" name="fileCompareType" value="file-file" id="fileFileType" checked>
+                    <label for="fileFileType">File to File</label>
+                </div>
+                <div class="flex items-center space-x-2">
+                    <input type="radio" name="fileCompareType" value="file-db" id="fileDbType">
+                    <label for="fileDbType">File to Database</label>
+                </div>
+                <div class="flex items-center space-x-2">
+                    <input type="radio" name="fileCompareType" value="db-file" id="dbFileType">
+                    <label for="dbFileType">Database to File</label>
+                </div>
+            </div>
+        </div>
+        
+        <form class="space-y-6" onsubmit="executeFileCompareOperation(event)">
+            <div id="filecompare-form-fields">
+                <div class="grid lg:grid-cols-2 gap-6">
+                    ${generateFileConfig("filecompareSource")}
+                    ${generateFileConfig("filecompareTarget")}
+                </div>
+                
+                ${generateUnixServerSection("filecompare")}
+            </div>
+            
+            <div class="execute-section text-center p-6 border-t border-gray-200">
+                <button type="submit" class="execute-button bg-gradient-to-r from-blue-600 to-blue-700 text-white px-8 py-3 rounded-lg font-semibold hover:from-blue-700 hover:to-blue-800 transition-all duration-200 shadow-lg">
+                    <span class="execute-icon mr-2">▶️</span>
+                    Execute File Comparison
+                </button>
+            </div>
+        </form>
+    `;
+
+  // Attach event listeners for comparison type selection
+  const radioButtons = document.querySelectorAll(
+    'input[name="fileCompareType"]'
+  );
+  radioButtons.forEach((radio) => {
+    radio.addEventListener("change", function () {
+      handleFileCompareTypeChange(this.value);
+    });
+  });
+
+  // Attach event listeners for file type changes
+  attachFileTypeListeners("filecompareSource");
+  attachFileTypeListeners("filecompareTarget");
+
+  // Attach event listeners for file location changes
+  attachFileLocationListeners("filecompareSource");
+  attachFileLocationListeners("filecompareTarget");
+
+  console.log("File compare form generated");
+}
+
+// Handle file compare type change
+function handleFileCompareTypeChange(type) {
+  console.log("File compare type changed to:", type);
+  const formFieldsContainer = document.getElementById(
+    "filecompare-form-fields"
+  );
+
+  if (!formFieldsContainer) return;
+
+  let sourceContent = "";
+  let targetContent = "";
+
+  switch (type) {
+    case "file-file":
+      sourceContent = generateFileConfig("filecompareSource");
+      targetContent = generateFileConfig("filecompareTarget");
+      break;
+    case "file-db":
+      sourceContent = generateFileConfig("filecompareSource");
+      targetContent = generateFormFields("filecompareTarget");
+      break;
+    case "db-file":
+      sourceContent = generateFormFields("filecompareSource");
+      targetContent = generateFileConfig("filecompareTarget");
+      break;
+  }
+
+  formFieldsContainer.innerHTML = `
+        <div class="grid lg:grid-cols-2 gap-6">
+            ${sourceContent}
+            ${targetContent}
+        </div>
+        
+        ${generateUnixServerSection("filecompare")}
+    `;
+
+  // Re-attach listeners
+  if (type === "file-file" || type === "file-db") {
+    attachFileTypeListeners("filecompareSource");
+    attachFileLocationListeners("filecompareSource");
+  } else {
+    attachFormListeners("filecompareSource");
+  }
+
+  if (type === "file-file" || type === "db-file") {
+    attachFileTypeListeners("filecompareTarget");
+    attachFileLocationListeners("filecompareTarget");
+  } else {
+    attachFormListeners("filecompareTarget");
+  }
+}
+
+// Attach file type listeners
+function attachFileTypeListeners(prefix) {
+  const fileTypeSelect = document.getElementById(prefix + "FileType");
+  if (fileTypeSelect) {
+    fileTypeSelect.addEventListener("change", function () {
+      handleFileTypeChange(prefix, this.value);
+    });
+  }
+}
+
+// Handle file type change
+function handleFileTypeChange(prefix, fileType) {
+  const delimiterContainer = document.getElementById(
+    prefix + "DelimiterContainer"
+  );
+
+  if (!delimiterContainer) return;
+
+  // Show delimiter field for CSV and Dat files
+  if (fileType === "CSV" || fileType === "Dat") {
+    delimiterContainer.classList.remove("hidden");
+  } else {
+    delimiterContainer.classList.add("hidden");
+  }
+}
+
+// Attach file location listeners
+function attachFileLocationListeners(prefix) {
+  const fileLocationSelect = document.getElementById(prefix + "FileLocation");
+  if (fileLocationSelect) {
+    fileLocationSelect.addEventListener("change", function () {
+      handleFileLocationChange(prefix, this.value);
+    });
+  }
+}
+
+// Handle file location change
+function handleFileLocationChange(prefix, locationType) {
+  const filePathContainer = document.getElementById(
+    prefix + "FilePathContainer"
+  );
+  const fileUploadContainer = document.getElementById(
+    prefix + "FileUploadContainer"
+  );
+  const filePathInput = document.getElementById(prefix + "FilePath");
+
+  if (!filePathContainer || !fileUploadContainer) return;
+
+  if (locationType === "upload") {
+    // Show upload, hide and disable file path
+    filePathContainer.classList.add("hidden");
+    fileUploadContainer.classList.remove("hidden");
+    if (filePathInput) filePathInput.disabled = true;
+  } else {
+    // Show file path, hide upload
+    filePathContainer.classList.remove("hidden");
+    fileUploadContainer.classList.add("hidden");
+    if (filePathInput) filePathInput.disabled = false;
+  }
+}
+
+// Execute file compare operation
+function executeFileCompareOperation(event) {
+  event.preventDefault();
+  console.log("Executing file compare operation...");
+
+  const compareType = document.querySelector(
+    'input[name="fileCompareType"]:checked'
+  ).value;
+
+  // Collect form data based on comparison type
+  const formData = {
+    compareType: compareType,
+    source: collectConfigData("filecompareSource", compareType === "db-file"),
+    target: collectConfigData("filecompareTarget", compareType === "file-db"),
+    unixServer: {
+      host: document.getElementById("filecompareUnixHost")?.value || "",
+      port: document.getElementById("filecompareUnixPort")?.value || "22",
+      username: document.getElementById("filecompareUnixUsername")?.value || "",
+      password: document.getElementById("filecompareUnixPassword")?.value || "",
+      keyFile: document.getElementById("filecompareUnixKeyFile")?.value || "",
+    },
+  };
+
+  console.log("File compare form data:", formData);
+
+  // Submit to backend
+  fetch("/api/execute-operation", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      operation: "File Comparison",
+      ...formData,
+    }),
+  })
+    .then((response) => response.json())
+    .then((data) => {
+      console.log("File compare operation response:", data);
+      alert(
+        data.message || "File comparison operation submitted successfully!"
+      );
+    })
+    .catch((error) => {
+      console.error("Error executing file compare operation:", error);
+      alert("Error executing file comparison: " + error.message);
+    });
+}
+
+// Collect configuration data (file or database)
+function collectConfigData(prefix, isDatabase) {
+  if (isDatabase) {
+    // Collect database configuration
+    return {
+      type: "database",
+      dbType: document.getElementById(prefix + "Type")?.value || "",
+      host: document.getElementById(prefix + "Host")?.value || "",
+      port: document.getElementById(prefix + "Port")?.value || "",
+      database: document.getElementById(prefix + "Database")?.value || "",
+      username: document.getElementById(prefix + "Username")?.value || "",
+      password: document.getElementById(prefix + "Password")?.value || "",
+      tableName: document.getElementById(prefix + "TableName")?.value || "",
+      primaryKey: typeof resolvePrimaryKeyValue === 'function' 
+        ? resolvePrimaryKeyValue(prefix)
+        : (document.getElementById(prefix + "PrimaryKey")?.value ||
+           document.getElementById(prefix + "PrimaryKeyManual")?.value || ""),
+      sqlQuery: document.getElementById(prefix + "SqlQuery")?.value || "",
+    };
+  } else {
+    // Collect file configuration
+    const locationType =
+      document.getElementById(prefix + "FileLocation")?.value || "";
+    const fileUploadInput = document.getElementById(prefix + "FileUpload");
+
+    return {
+      type: "file",
+      fileType: document.getElementById(prefix + "FileType")?.value || "",
+      delimiter: document.getElementById(prefix + "Delimiter")?.value || "",
+      locationType: locationType,
+      filePath:
+        locationType === "upload"
+          ? ""
+          : document.getElementById(prefix + "FilePath")?.value || "",
+      uploadedFile:
+        locationType === "upload" && fileUploadInput?.files[0]
+          ? fileUploadInput.files[0].name
+          : "",
+      sqlQuery: document.getElementById(prefix + "SqlQuery")?.value || "",
+    };
+  }
+}
