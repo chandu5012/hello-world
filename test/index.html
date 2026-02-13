@@ -1,0 +1,744 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Wells Fargo Data Management Platform</title>
+    <meta name="description" content="Enterprise Data Operations Platform" />
+    <meta name="author" content="Wells Fargo" />
+
+    <meta property="og:title" content="Wells Fargo Data Management Platform" />
+    <meta
+      property="og:description"
+      content="Enterprise Data Operations Platform"
+    />
+    <meta property="og:type" content="website" />
+
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='css/style.css') }}"
+    />
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='css/additional-styles.css') }}"
+    />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
+    <style>
+      @keyframes logRingSpin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+      }
+    </style>
+  <body>
+    <div
+      class="min-h-screen bg-gradient-to-br from-background via-background to-primary/5"
+    >
+      <!-- Header - Wells Fargo exact match -->
+      <header style="background-color: #D71E28;">
+        <div class="container mx-auto" style="padding: 20px 24px;">
+          <h1
+            class="wells-fargo-header-font"
+            style="font-size: 30px; font-weight: 400; letter-spacing: 0; line-height: 1; color: #FFFFFF; margin: 0;"
+          >
+            WELLS FARGO
+          </h1>
+        </div>
+        <div style="height: 4px; background-color: #FFCD41;"></div>
+      </header>
+
+      <main class="container mx-auto px-6 py-8">
+        <div class="mb-6 animate-fade-in">
+          <div
+            class="relative bg-gradient-to-br from-wellsfargo-red/5 via-background to-wellsfargo-gold/5 rounded-lg p-4 border border-border/50 shadow-md"
+          >
+            <div class="text-center">
+              <h2 class="text-2xl md:text-3xl font-bold text-foreground">
+                Data Management
+                <span class="text-wellsfargo-red">Operations</span>
+              </h2>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tabs - Updated to 6 tabs -->
+        <div class="tabs w-full">
+          <div
+            class="tab-buttons grid w-full grid-cols-6 mb-6 bg-card/80 backdrop-blur-sm border-2 border-border rounded-xl shadow-lg p-2 gap-1.5"
+          >
+            <button class="tab-button active text-center" data-tab="comparison">
+              Data Comparison
+            </button>
+            <button class="tab-button text-center" data-tab="load">
+              Data Load
+            </button>
+            <button class="tab-button text-center" data-tab="schema">
+              Schema Generation
+            </button>
+            <button class="tab-button text-center" data-tab="fileload">
+              File Load
+            </button>
+            <button class="tab-button text-center" data-tab="filedownload">
+              File Download
+            </button>
+            <button class="tab-button text-center" data-tab="mismatch">
+              Mismatch Explorer
+            </button>
+          </div>
+
+          <!-- Data Comparison Tab -->
+          <div
+            id="comparison"
+            class="tab-content active space-y-6 animate-slide-up"
+          >
+            <div
+              class="card card-elevated border-t-4 border-t-primary shadow-lg hover-shadow-xl transition-all"
+              id="comparison-card"
+            >
+              <div
+                class="card-header bg-gradient-to-br from-background via-background to-primary/5"
+              >
+                <h3
+                  class="text-2xl font-bold text-gradient"
+                  id="comparison-heading"
+                >
+                  Data Comparison
+                </h3>
+                <p class="text-base text-muted-foreground">
+                  Compare data between source and target systems to identify
+                  discrepancies and ensure data integrity with advanced
+                  validation.
+                </p>
+              </div>
+              <div class="card-content">
+                <div class="feature-box feature-box-primary">
+                  <div class="feature-blur-decoration"></div>
+                  <h4
+                    class="font-semibold text-primary mb-3 text-lg flex items-center gap-2 relative z-10"
+                  >
+                    <span class="text-xl">✨</span> Comparison Features
+                  </h4>
+                  <ul
+                    class="text-sm text-muted-foreground space-y-2.5 relative z-10"
+                  >
+                    <li class="flex items-start gap-2">
+                      <span class="text-primary mt-0.5">•</span>
+                      <span>Row count validation with detailed metrics</span>
+                    </li>
+                    <li class="flex items-start gap-2">
+                      <span class="text-primary mt-0.5">•</span>
+                      <span>Schema structure comparison and analysis</span>
+                    </li>
+                    <li class="flex items-start gap-2">
+                      <span class="text-primary mt-0.5">•</span>
+                      <span>Data type validation with mismatch detection</span>
+                    </li>
+                    <li class="flex items-start gap-2">
+                      <span class="text-primary mt-0.5">•</span>
+                      <span
+                        >Value-level comparison with comprehensive diff
+                        reporting</span
+                      >
+                    </li>
+                    <li class="flex items-start gap-2">
+                      <span class="text-primary mt-0.5">•</span>
+                      <span
+                        >Multi-format support: File-to-File, File-to-Database,
+                        Database-to-File</span
+                      >
+                    </li>
+                  </ul>
+                </div>
+
+                <!-- Comparison Type Selection -->
+                <div
+                  class="mb-6 p-6 border-2 border-dashed border-primary/30 rounded-xl bg-gradient-to-br from-card to-primary/5 shadow-sm"
+                >
+                  <label
+                    class="text-lg font-semibold mb-4 block text-foreground flex items-center gap-2"
+                  >
+                    <span class="text-2xl">🔄</span> Comparison Type
+                  </label>
+                  <select
+                    id="comparison-type-select"
+                    class="form-select w-full p-3 h-12 border-2 border-gray-300 rounded-lg text-base font-medium hover-border-primary transition-colors focus:border-primary focus:ring-2 focus:ring-primary/20"
+                  >
+                    <option value="">Select comparison type</option>
+                    <option value="file-to-file">File to File</option>
+                    <option value="file-to-database">File to Database</option>
+                    <option value="database-to-file">Database to File</option>
+                    <option value="database-to-database">
+                      Database to Database
+                    </option>
+                  </select>
+                </div>
+
+                <!-- Table Mode Selection - Only for Database to Database -->
+                <div
+                  class="mb-6 p-6 border-2 border-dashed border-accent/30 rounded-xl bg-gradient-to-br from-card to-accent/5 shadow-sm animate-scale-in"
+                  id="table-mode-selection"
+                  style="display: none"
+                >
+                  <label
+                    class="text-lg font-semibold mb-4 block text-foreground flex items-center gap-2"
+                  >
+                    <span class="text-2xl">📊</span> Table Comparison Mode
+                  </label>
+                  <div class="radio-group flex gap-8">
+                    <div
+                      class="flex items-center space-x-3 cursor-pointer group"
+                    >
+                      <input
+                        type="radio"
+                        name="tableMode"
+                        value="single"
+                        id="single"
+                        checked
+                        class="w-5 h-5"
+                      />
+                      <label
+                        for="single"
+                        class="text-base font-medium cursor-pointer group-hover-text-primary transition-colors"
+                        >Single Table</label
+                      >
+                    </div>
+                    <div
+                      class="flex items-center space-x-3 cursor-pointer group"
+                    >
+                      <input
+                        type="radio"
+                        name="tableMode"
+                        value="multi"
+                        id="multi"
+                        class="w-5 h-5"
+                      />
+                      <label
+                        for="multi"
+                        class="text-base font-medium cursor-pointer group-hover-text-primary transition-colors"
+                        >Multi Table</label
+                      >
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Dynamic form will be inserted here -->
+                <div id="comparison-form"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Data Load Tab -->
+          <div id="load" class="tab-content space-y-6 animate-slide-up">
+            <div
+              class="card card-elevated border-t-4 border-t-load shadow-load hover-shadow-load-xl transition-all"
+              id="load-card"
+            >
+              <div
+                class="card-header bg-gradient-to-br from-background via-background to-load/5"
+              >
+                <h3
+                  class="text-2xl font-bold text-gradient-load"
+                  id="load-heading"
+                >
+                  Data Load
+                </h3>
+                <p class="text-base text-muted-foreground">
+                  Transfer and load data from source systems to target
+                  destinations with robust error handling and monitoring.
+                </p>
+              </div>
+              <div class="card-content">
+                <div class="feature-box feature-box-load">
+                  <div class="feature-blur-decoration"></div>
+                  <h4
+                    class="font-semibold text-load-dark mb-3 text-lg flex items-center gap-2 relative z-10"
+                  >
+                    <span class="text-2xl">⚡</span> Load Capabilities
+                  </h4>
+                  <ul
+                    class="text-sm text-muted-foreground space-y-2.5 relative z-10"
+                  >
+                    <li class="flex items-start gap-2">
+                      <span class="text-load mt-0.5 font-bold">✓</span>
+                      <span
+                        >Incremental and full data loads with transaction
+                        support</span
+                      >
+                    </li>
+                    <li class="flex items-start gap-2">
+                      <span class="text-load mt-0.5 font-bold">✓</span>
+                      <span
+                        >Batch processing with configurable sizes and parallel
+                        execution</span
+                      >
+                    </li>
+                    <li class="flex items-start gap-2">
+                      <span class="text-load mt-0.5 font-bold">✓</span>
+                      <span
+                        >Advanced error logging and automatic recovery
+                        mechanisms</span
+                      >
+                    </li>
+                    <li class="flex items-start gap-2">
+                      <span class="text-load mt-0.5 font-bold">✓</span>
+                      <span
+                        >Real-time progress monitoring with detailed
+                        statistics</span
+                      >
+                    </li>
+                  </ul>
+                </div>
+                <div id="load-form"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Schema Generation Tab -->
+          <div id="schema" class="tab-content space-y-6 animate-slide-up">
+            <div
+              class="card card-elevated border-t-4 border-t-schema shadow-schema hover-shadow-schema-xl transition-all"
+              id="schema-card"
+            >
+              <div
+                class="card-header bg-gradient-to-br from-background via-background to-schema/5"
+              >
+                <h3
+                  class="text-2xl font-bold text-gradient-schema"
+                  id="schema-heading"
+                >
+                  Schema Generation
+                </h3>
+                <p class="text-base text-muted-foreground">
+                  Automatically generate database schemas and DDL scripts based
+                  on source system analysis with best practices.
+                </p>
+              </div>
+              <div class="card-content">
+                <div class="feature-box feature-box-schema">
+                  <div class="feature-blur-decoration"></div>
+                  <h4
+                    class="font-semibold text-schema-dark mb-3 text-lg flex items-center gap-2 relative z-10"
+                  >
+                    <span class="text-2xl">🔧</span> Generation Features
+                  </h4>
+                  <ul
+                    class="text-sm text-muted-foreground space-y-2.5 relative z-10"
+                  >
+                    <li class="flex items-start gap-2">
+                      <span class="text-schema mt-0.5 font-bold">✓</span>
+                      <span
+                        >Automatic DDL script generation with optimized data
+                        types</span
+                      >
+                    </li>
+                    <li class="flex items-start gap-2">
+                      <span class="text-schema mt-0.5 font-bold">✓</span>
+                      <span
+                        >Index and constraint creation with performance
+                        tuning</span
+                      >
+                    </li>
+                    <li class="flex items-start gap-2">
+                      <span class="text-schema mt-0.5 font-bold">✓</span>
+                      <span
+                        >Intelligent data type mapping and size
+                        optimization</span
+                      >
+                    </li>
+                    <li class="flex items-start gap-2">
+                      <span class="text-schema mt-0.5 font-bold">✓</span>
+                      <span
+                        >Schema validation and industry best practices
+                        enforcement</span
+                      >
+                    </li>
+                  </ul>
+                </div>
+                <div id="schema-form"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- File Load Tab -->
+          <div id="fileload" class="tab-content space-y-6 animate-slide-up">
+            <div
+              class="card card-elevated border-t-4 border-t-fileload shadow-fileload hover-shadow-fileload-xl transition-all"
+              id="fileload-card"
+            >
+              <div
+                class="card-header bg-gradient-to-br from-background via-background to-fileload/5"
+              >
+                <h3
+                  class="text-2xl font-bold text-gradient-fileload"
+                  id="fileload-heading"
+                >
+                  File Load
+                </h3>
+                <p class="text-base text-muted-foreground">
+                  Load data from various file formats (CSV, JSON, XML, Parquet)
+                  into target database systems with validation.
+                </p>
+              </div>
+              <div class="card-content">
+                <div class="feature-box feature-box-fileload">
+                  <div class="feature-blur-decoration"></div>
+                  <h4
+                    class="font-semibold text-fileload-dark mb-3 text-lg flex items-center gap-2 relative z-10"
+                  >
+                    <span class="text-2xl">📁</span> Supported Formats
+                  </h4>
+                  <ul
+                    class="text-sm text-muted-foreground space-y-2.5 relative z-10"
+                  >
+                    <li class="flex items-start gap-2">
+                      <span class="text-fileload mt-0.5 font-bold">✓</span>
+                      <span
+                        >CSV with custom delimiters, encoding, and header
+                        detection</span
+                      >
+                    </li>
+                    <li class="flex items-start gap-2">
+                      <span class="text-fileload mt-0.5 font-bold">✓</span>
+                      <span
+                        >JSON with nested object support and schema
+                        inference</span
+                      >
+                    </li>
+                    <li class="flex items-start gap-2">
+                      <span class="text-fileload mt-0.5 font-bold">✓</span>
+                      <span>XML with XPath parsing and attribute handling</span>
+                    </li>
+                    <li class="flex items-start gap-2">
+                      <span class="text-fileload mt-0.5 font-bold">✓</span>
+                      <span
+                        >Parquet with columnar optimization and
+                        compression</span
+                      >
+                    </li>
+                  </ul>
+                </div>
+                <div id="fileload-form"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- File Download Tab -->
+          <div id="filedownload" class="tab-content space-y-6 animate-slide-up">
+            <div
+              class="card card-elevated border-t-4 border-t-filedownload shadow-filedownload hover-shadow-filedownload-xl transition-all"
+              id="filedownload-card"
+            >
+              <div
+                class="card-header bg-gradient-to-br from-background via-background to-filedownload/5"
+              >
+                <h3
+                  class="text-2xl font-bold text-gradient-filedownload"
+                  id="filedownload-heading"
+                >
+                  File Download
+                </h3>
+                <p class="text-base text-muted-foreground">
+                  Download files from remote servers and transfer them to target
+                  destinations securely with integrity verification.
+                </p>
+              </div>
+              <div class="card-content">
+                <div class="feature-box feature-box-filedownload">
+                  <div class="feature-blur-decoration"></div>
+                  <h4
+                    class="font-semibold text-filedownload-dark mb-3 text-lg flex items-center gap-2 relative z-10"
+                  >
+                    <span class="text-2xl">🔒</span> Download Features
+                  </h4>
+                  <ul
+                    class="text-sm text-muted-foreground space-y-2.5 relative z-10"
+                  >
+                    <li class="flex items-start gap-2">
+                      <span class="text-filedownload mt-0.5 font-bold">✓</span>
+                      <span
+                        >Secure file transfer protocols (SFTP, SCP) with
+                        encryption</span
+                      >
+                    </li>
+                    <li class="flex items-start gap-2">
+                      <span class="text-filedownload mt-0.5 font-bold">✓</span>
+                      <span
+                        >Batch file download capabilities with parallel
+                        transfers</span
+                      >
+                    </li>
+                    <li class="flex items-start gap-2">
+                      <span class="text-filedownload mt-0.5 font-bold">✓</span>
+                      <span
+                        >File integrity verification using checksums and
+                        hashing</span
+                      >
+                    </li>
+                    <li class="flex items-start gap-2">
+                      <span class="text-filedownload mt-0.5 font-bold">✓</span>
+                      <span
+                        >Resume interrupted downloads with automatic retry
+                        logic</span
+                      >
+                    </li>
+                  </ul>
+                </div>
+                <div id="filedownload-form"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Mismatch Explorer Tab -->
+          <div id="mismatch" class="tab-content space-y-6 animate-slide-up">
+            <div
+              class="card card-elevated border-t-4 border-t-mismatch shadow-mismatch hover-shadow-mismatch-xl transition-all"
+              id="mismatch-card"
+            >
+              <div
+                class="card-header bg-gradient-to-br from-background via-background to-mismatch/5"
+              >
+                <h3
+                  class="text-2xl font-bold text-gradient-mismatch"
+                  id="mismatch-heading"
+                >
+                  Mismatch Explorer
+                </h3>
+                <p class="text-base text-muted-foreground">
+                  Fetch data from Source and Target systems, compare records side-by-side with field-level mismatch highlighting.
+                </p>
+              </div>
+              <div class="card-content">
+                <div class="feature-box feature-box-mismatch">
+                  <div class="feature-blur-decoration"></div>
+                  <h4
+                    class="font-semibold text-mismatch-dark mb-3 text-lg flex items-center gap-2 relative z-10"
+                  >
+                    <span class="text-2xl">🔍</span> Explorer Features
+                  </h4>
+                  <ul
+                    class="text-sm text-muted-foreground space-y-2.5 relative z-10"
+                  >
+                    <li class="flex items-start gap-2">
+                      <span class="text-mismatch mt-0.5 font-bold">✓</span>
+                      <span>Side-by-side record comparison with field-level highlighting</span>
+                    </li>
+                    <li class="flex items-start gap-2">
+                      <span class="text-mismatch mt-0.5 font-bold">✓</span>
+                      <span>Support for up to 10,000 records with efficient pagination</span>
+                    </li>
+                    <li class="flex items-start gap-2">
+                      <span class="text-mismatch mt-0.5 font-bold">✓</span>
+                      <span>Configurable comparison rules (trim, case, null handling)</span>
+                    </li>
+                    <li class="flex items-start gap-2">
+                      <span class="text-mismatch mt-0.5 font-bold">✓</span>
+                      <span>Export individual record comparisons to CSV</span>
+                    </li>
+                  </ul>
+                </div>
+                <div id="mismatch-form"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Log Display Section -->
+        <div class="log-section space-y-6">
+          <div
+            class="card card-elevated border border-wellsfargo-gold/40 rounded-lg overflow-hidden"
+          >
+            <div class="card-header pb-3">
+              <div class="flex items-center justify-between">
+                <h3
+                  class="text-lg font-semibold text-wellsfargo-darkred flex items-center gap-2"
+                >
+                  <div
+                    id="connection-status-indicator"
+                    class="w-3 h-3 rounded-full bg-red-500"
+                  ></div>
+                  <span id="log-title">Real-time Logs - Data Comparison</span>
+                  <!-- Status spinner ring -->
+                  <span id="log-status-ring" style="display:inline-block; width:20px; height:20px; min-width:20px; min-height:20px; border-radius:50%; border:3px solid #9ca3af; flex-shrink:0; transition: border-color 0.3s, animation 0.3s; vertical-align:middle;"></span>
+                </h3>
+                <div class="flex gap-3">
+                  <button
+                    id="pause-logs"
+                    class="btn-outline"
+                    style="background: linear-gradient(to right, #f59e0b, #d97706); color: white; border: none; padding: 6px 14px; border-radius: 8px; cursor: pointer; font-weight: 600; box-shadow: 0 2px 8px rgba(245,158,11,0.3); transition: all 0.2s;"
+                    onmouseenter="this.style.background='linear-gradient(to right, #d97706, #b45309)'; this.style.boxShadow='0 4px 12px rgba(217,119,6,0.4)'; this.style.transform='translateY(-1px)';"
+                    onmouseleave="this.style.background='linear-gradient(to right, #f59e0b, #d97706)'; this.style.boxShadow='0 2px 8px rgba(245,158,11,0.3)'; this.style.transform='translateY(0)';"
+                  >
+                    <svg
+                      id="pause-icon"
+                      class="icon"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        stroke-width="2"
+                        d="M10 9v6m4-6v6"
+                      ></path>
+                    </svg>
+                    <svg
+                      id="play-icon"
+                      class="icon hidden"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        stroke-width="2"
+                        d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"
+                      ></path>
+                    </svg>
+                  </button>
+                  <button
+                    id="clear-logs"
+                    class="btn-outline"
+                    style="background: linear-gradient(to right, #ef4444, #dc2626); color: white; border: none; padding: 6px 14px; border-radius: 8px; cursor: pointer; font-weight: 600; box-shadow: 0 2px 8px rgba(239,68,68,0.3); transition: all 0.2s;"
+                    onmouseenter="this.style.background='linear-gradient(to right, #dc2626, #b91c1c)'; this.style.boxShadow='0 4px 12px rgba(220,38,38,0.4)'; this.style.transform='translateY(-1px)';"
+                    onmouseleave="this.style.background='linear-gradient(to right, #ef4444, #dc2626)'; this.style.boxShadow='0 2px 8px rgba(239,68,68,0.3)'; this.style.transform='translateY(0)';"
+                  >
+                    <svg
+                      class="icon"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        stroke-width="2"
+                        d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                      ></path>
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div class="card-content">
+              <div
+                class="h-64 w-full border border-border rounded-md p-4 bg-black text-green-400 font-mono text-sm overflow-y-auto"
+              >
+                <div id="log-display">
+                  <div class="text-gray-500">
+                    No logs available. Click 'Connect' to start receiving
+                    real-time logs.
+                  </div>
+                </div>
+              </div>
+              <div
+                id="paused-indicator"
+                class="hidden mt-2 text-sm text-yellow-600 flex items-center gap-1"
+              >
+                <svg
+                  class="w-4 h-4"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M10 9v6m4-6v6"
+                  ></path>
+                </svg>
+                Logs paused - new messages are being buffered
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Schema Generation - Download Button Section (shown after completion) -->
+        <div id="schema-download-section" class="mt-6 flex justify-center hidden">
+          <button
+            id="schema-download-btn"
+            class="schema-download-button group"
+            disabled
+          >
+            <span class="mr-2 text-xl">📥</span>
+            <span id="schema-download-btn-text">Download Schema File</span>
+          </button>
+        </div>
+
+        <!-- File Download - Download Button Section (shown after completion) -->
+        <div id="filedownload-download-section" class="mt-6 flex justify-center hidden">
+          <button
+            id="filedownload-download-btn"
+            class="filedownload-download-button group"
+            disabled
+          >
+            <span class="mr-2 text-xl">📥</span>
+            <span id="filedownload-download-btn-text">Download File</span>
+          </button>
+        </div>
+
+        <!-- Download Report Button Section - ONLY for Data Comparison tab -->
+        <div id="download-report-section" class="mt-8 flex justify-center">
+          <button
+            id="download-report-btn"
+            class="download-report-button group"
+            disabled
+          >
+            <div class="btn-overlay"></div>
+            <!-- Spinner for loading state -->
+            <div
+              id="spinner"
+              class="spinner"
+            ></div>
+            <!-- Check icon for complete state -->
+            <svg
+              id="check-icon"
+              class="hidden icon animate-scale-in"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+              <polyline points="22 4 12 14.01 9 11.01"></polyline>
+            </svg>
+            <span id="download-btn-text">Waiting for Comparison...</span>
+            <!-- Download icon for complete state -->
+            <svg
+              id="download-icon"
+              class="hidden icon group-hover:animate-bounce"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="7 10 12 15 17 10"></polyline>
+              <line x1="12" y1="15" x2="12" y2="3"></line>
+            </svg>
+          </button>
+        </div>
+      </main>
+
+      <!-- Footer -->
+      <footer
+        class="bg-wellsfargo-red text-white py-5 mt-12 shadow-lg border-t-4 border-wellsfargo-gold"
+      >
+        <div class="container mx-auto px-6 text-center">
+          <p class="text-sm font-medium">
+            Wells Fargo Data Management Platform © 2024 - Secure, Compliant,
+            Enterprise-Ready
+          </p>
+        </div>
+      </footer>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/script.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/file-compare-functions.js') }}"></script>
+  </body>
+</html>
