@@ -1,28 +1,14 @@
 # ============================================================
-# COMPLETE SINGLE CONTINUOUS PYSPARK SCRIPT (NO CUSTOM FUNCTIONS)
+# COMPLETE UPDATED SINGLE CONTINUOUS PYSPARK SCRIPT (NO CUSTOM FUNCTIONS)
 # Compatible with:
 #   - Spark 2.4.x + Python 2.7
 #   - Spark 3.3.x + Python 3.x
 #
-# Features:
-# 1) PK input: user enters "N/A" OR comma-separated PK columns.
-#    - PK cols may exist in source OR target; if exists in either side -> consider.
-# 2) Schema alignment:
-#    - If source has cols not in target -> add to target as NULL
-#    - If target has cols not in source -> add to source as NULL
-#    - Missing PK columns also get added as NULL on other side.
-# 3) If no usable PK -> fallback surrogate key using:
-#      __row_hash (sha2 of normalized row) + __row_num
-#    - UI-friendly short key: __row_hash_short (only on source to avoid ambiguity)
-# 4) Comparison rules applied only when flags True:
-#      trim_spaces, ignore_case, null_equals_empty, numeric_tolerance (>0)
-# 5) Outputs:
-#    A) long_df: PK..., FIELD_NAME, SRC_STATUS, TGT_STATUS, MATCH_IND
-#    B) final_df: nested JSON structure for UI
-# 6) JSON NULL visibility:
-#    - Null values are converted to string "null" so JSON always has keys
-# 7) Client mode local output:
-#    - Writes Spark JSON folder + copies single part file to {run_id}.json
+# Fixes included:
+# ✅ Null values appear in JSON ("null" string)
+# ✅ No-PK fallback uses full hash for join but SHORT hash for UI display
+# ✅ No ambiguity / no "s.__row_hash_short does not exist" error
+# ✅ long_df building fixed (no alias mismatch)
 # ============================================================
 
 import os
@@ -254,25 +240,28 @@ for c in compare_cols:
     )
 
 # -----------------------------
-# 8) Create long_df
-#    IMPORTANT: out_pk_cols might include __row_hash_short which exists ONLY on source alias "s"
+# 8) Create long_df (FIXED: no 's.' prefix after aliasing)
 # -----------------------------
+# Select PK cols from source alias 's' and alias them to top-level names
 select_pk_cols = []
 for k in out_pk_cols:
-    # select from source alias to avoid ambiguity (works for both normal PK and short-hash case)
     select_pk_cols.append(F.col("s.`%s`" % k).alias(k))
 
-long_df = (
-    j.select(
-        *(select_pk_cols + [F.explode(F.array(*pairs)).alias("x")])
-    )
-    .select(
-        *select_pk_cols,
+# Step-1: select pk cols + exploded array
+tmp_df = j.select(*(select_pk_cols + [F.explode(F.array(*pairs)).alias("x")]))
+
+# Step-2: now pk cols are plain top-level cols (k), so select without 's.'
+plain_pk_cols = []
+for k in out_pk_cols:
+    plain_pk_cols.append(F.col(k))
+
+long_df = tmp_df.select(
+    *(plain_pk_cols + [
         F.col("x.FIELD_NAME"),
         F.col("x.SRC_STATUS"),
         F.col("x.TGT_STATUS"),
         F.col("x.MATCH_IND")
-    )
+    ])
 )
 
 # -----------------------------
@@ -282,7 +271,6 @@ df_fields = long_df.withColumn(
     "field_struct",
     F.struct(
         F.col("FIELD_NAME").cast("string").alias("fieldName"),
-        # keep "null" string if present, else value
         F.when(F.col("SRC_STATUS").isNull(), F.lit("null")).otherwise(F.col("SRC_STATUS")).alias("sourceValue"),
         F.when(F.col("TGT_STATUS").isNull(), F.lit("null")).otherwise(F.col("TGT_STATUS")).alias("targetValue"),
         F.when(F.col("MATCH_IND") == "Y", F.lit("MATCH")).otherwise(F.lit("MISMATCH")).alias("status")
@@ -321,7 +309,6 @@ final_df = final_df.select("pk", "pkDisplay", "mismatchCount", "status", "fields
 if not os.path.exists(ui_base_dir):
     os.makedirs(ui_base_dir)
 
-# coalesce(1) -> write single part file
 final_df.coalesce(1).write.mode("overwrite").json(spark_json_folder)
 
 part_files = glob.glob(os.path.join(spark_json_folder, "part-*.json"))
