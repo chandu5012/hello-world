@@ -1,14 +1,13 @@
 # ============================================================
-# COMPLETE UPDATED SINGLE CONTINUOUS PYSPARK SCRIPT (NO CUSTOM FUNCTIONS)
-# Compatible with:
-#   - Spark 2.4.x + Python 2.7
-#   - Spark 3.3.x + Python 3.x
+# FINAL UPDATED PYSPARK SCRIPT (Spark 2.4/Python2.7 + Spark 3.3)
 #
-# Fixes included:
-# ✅ Null values appear in JSON ("null" string)
-# ✅ No-PK fallback uses full hash for join but SHORT hash for UI display
-# ✅ No ambiguity / no "s.__row_hash_short does not exist" error
-# ✅ long_df building fixed (no alias mismatch)
+# Fixes:
+# ✅ NO-PK FULL OUTER JOIN: pk/ pkDisplay never empty now
+# ✅ mismatchCount correct (won’t become 110 for 10 fields)
+# ✅ deterministic matching for duplicates using __row_sort_key
+# ✅ null values appear in JSON as "null"
+# ✅ schema alignment source vs target (missing cols -> null)
+# ✅ supports options: trim, ignore_case, null_equals_empty, numeric_tolerance
 # ============================================================
 
 import os
@@ -28,25 +27,21 @@ spark = SparkSession.builder.appName("MismatchExplorer_Final_JSON_Compat").getOr
 run_id = "mismatch_268ac90a56e2"
 
 # User enters either "N/A" or PK list like: "client_id,account_id,batch_id"
-pk_columns_input = "client_id,account_id,batch_id"   # change to "N/A" when no PK
+pk_columns_input = "N/A"   # <-- set to N/A to test NO-PK case
 
-# Comparison options (apply only if True / tol > 0)
 trim_spaces = True
 ignore_case = False
 null_equals_empty = True
-numeric_tolerance = 0.0   # set to > 0 (ex: 0.01) for numeric tolerance
-join_type = "full_outer"  # "inner" / "left" / "right" / "full_outer"
+numeric_tolerance = 0.0   # set to > 0 for tolerance
+join_type = "full_outer"  # full_outer is common for mismatch explorer
 
-# Local output path for UI (client mode)
 ui_base_dir = "/tmp/ui_output"
 spark_json_folder = os.path.join(ui_base_dir, "run_id=" + run_id)
 ui_single_json_file = os.path.join(ui_base_dir, run_id + ".json")
 
 # -----------------------------
-# SOURCE/TARGET DF (REPLACE WITH YOUR REAL LOADS)
+# SOURCE/TARGET DF (REPLACE WITH REAL LOADS)
 # -----------------------------
-# NOTE: This is just sample data. Replace source_df and target_df with your JDBC/Mongo/File reads.
-
 src_schema = T.StructType([
     T.StructField("client_id", T.StringType(), True),
     T.StructField("account_id", T.StringType(), True),
@@ -84,8 +79,7 @@ pk_requested = []
 if pk_columns_input is not None:
     pk_str = str(pk_columns_input).strip()
     if pk_str and pk_str.upper() != "N/A":
-        parts = pk_str.split(",")
-        for p in parts:
+        for p in pk_str.split(","):
             c = p.strip()
             if c:
                 pk_requested.append(c)
@@ -102,7 +96,7 @@ for c in pk_requested:
         resolved_pk.append(c)
 
 # -----------------------------
-# 3) Schema alignment (union of columns + resolved_pk)
+# 3) Schema alignment (source vs target)
 # -----------------------------
 src_type_map = {}
 for f in source_df.schema.fields:
@@ -145,13 +139,14 @@ tgt_type_map2 = {}
 for f in target_df.schema.fields:
     tgt_type_map2[f.name] = f.dataType.simpleString()
 
+# compare columns = all except resolved_pk
 compare_cols = []
 for c in union_cols:
     if c not in resolved_pk:
         compare_cols.append(c)
 
 # -----------------------------
-# 4) Normalization helper (inline)
+# 4) Normalization rules
 # -----------------------------
 def _normalize_expr(col_expr):
     c = col_expr.cast("string")
@@ -170,13 +165,12 @@ def _is_numeric_type(t):
 tol = float(numeric_tolerance or 0.0)
 
 # -----------------------------
-# 5) Choose join cols (PK if available else surrogate)
+# 5) Join keys: PK if exists else fallback
 # -----------------------------
 join_cols = list(resolved_pk)
-out_pk_cols = list(resolved_pk)
 
 if len(join_cols) == 0:
-    # Build row hash using normalized compare columns
+    # Build normalized string list for hash and deterministic ordering
     src_norm_cols = []
     for c in compare_cols:
         src_norm_cols.append(F.coalesce(_normalize_expr(F.col(c)), F.lit("∅")))
@@ -188,25 +182,37 @@ if len(join_cols) == 0:
     source_df = source_df.withColumn("__row_hash", F.sha2(F.concat_ws("||", *src_norm_cols), 256))
     target_df = target_df.withColumn("__row_hash", F.sha2(F.concat_ws("||", *tgt_norm_cols), 256))
 
-    w = Window.partitionBy("__row_hash").orderBy(F.lit(1))
+    # deterministic ordering within same hash bucket
+    source_df = source_df.withColumn("__row_sort_key", F.concat_ws("||", *src_norm_cols))
+    target_df = target_df.withColumn("__row_sort_key", F.concat_ws("||", *tgt_norm_cols))
+
+    w = Window.partitionBy("__row_hash").orderBy(F.col("__row_sort_key"))
+
     source_df = source_df.withColumn("__row_num", F.row_number().over(w))
     target_df = target_df.withColumn("__row_num", F.row_number().over(w))
 
-    # UI-friendly short hash ONLY on source to avoid ambiguity after join
-    source_df = source_df.withColumn("__row_hash_short", F.substring(F.col("__row_hash"), 1, 12))
-
-    # Join on full hash + row_num, display short hash + row_num
     join_cols = ["__row_hash", "__row_num"]
-    out_pk_cols = ["__row_hash_short", "__row_num"]
 
 # -----------------------------
-# 6) Join
+# 6) Join (USING join_cols => output join columns are top-level coalesced)
 # -----------------------------
 j = source_df.alias("s").join(target_df.alias("t"), on=join_cols, how=join_type)
 
 # -----------------------------
-# 7) Build comparison structs (row per field)
-#    Ensure null values appear in JSON by converting null -> "null"
+# 7) Decide output PK columns (IMPORTANT FIX)
+#    - If PK exists: use top-level PK cols from join output
+#    - If NO PK: use top-level __row_hash + __row_num to build pk (works for target-only rows too)
+# -----------------------------
+if len(resolved_pk) == 0:
+    # join output contains __row_hash and __row_num at top-level
+    j = j.withColumn("__pk_hash_short", F.substring(F.col("__row_hash"), 1, 12))
+    j = j.withColumn("__pk_row_num", F.col("__row_num"))
+    out_pk_cols = ["__pk_hash_short", "__pk_row_num"]
+else:
+    out_pk_cols = list(resolved_pk)
+
+# -----------------------------
+# 8) Build comparison structs (explode fields)
 # -----------------------------
 pairs = []
 
@@ -240,23 +246,16 @@ for c in compare_cols:
     )
 
 # -----------------------------
-# 8) Create long_df (FIXED: no 's.' prefix after aliasing)
+# 9) long_df (PK cols are TOP-LEVEL now, not s.)
 # -----------------------------
-# Select PK cols from source alias 's' and alias them to top-level names
 select_pk_cols = []
 for k in out_pk_cols:
-    select_pk_cols.append(F.col("s.`%s`" % k).alias(k))
+    select_pk_cols.append(F.col(k))
 
-# Step-1: select pk cols + exploded array
 tmp_df = j.select(*(select_pk_cols + [F.explode(F.array(*pairs)).alias("x")]))
 
-# Step-2: now pk cols are plain top-level cols (k), so select without 's.'
-plain_pk_cols = []
-for k in out_pk_cols:
-    plain_pk_cols.append(F.col(k))
-
 long_df = tmp_df.select(
-    *(plain_pk_cols + [
+    *(select_pk_cols + [
         F.col("x.FIELD_NAME"),
         F.col("x.SRC_STATUS"),
         F.col("x.TGT_STATUS"),
@@ -265,7 +264,7 @@ long_df = tmp_df.select(
 )
 
 # -----------------------------
-# 9) Build final_df (nested JSON structure)
+# 10) final_df JSON
 # -----------------------------
 df_fields = long_df.withColumn(
     "field_struct",
@@ -286,7 +285,7 @@ final_df = (
     .withColumn("status", F.when(F.col("mismatchCount") > 0, F.lit("MISMATCH")).otherwise(F.lit("MATCH")))
 )
 
-# pk struct
+# pk struct (top-level pk columns)
 pk_struct_cols = []
 for c in out_pk_cols:
     pk_struct_cols.append(F.col(c).cast("string").alias(c))
@@ -298,13 +297,13 @@ for c in out_pk_cols:
     pk_disp_parts.append(F.concat(F.lit(c + "="), F.col(c).cast("string")))
 final_df = final_df.withColumn("pkDisplay", F.concat_ws(" | ", *pk_disp_parts))
 
-# sort fields for stable UI view
+# stable ordering of fields
 final_df = final_df.withColumn("fields", F.sort_array(F.col("fields")))
 
 final_df = final_df.select("pk", "pkDisplay", "mismatchCount", "status", "fields")
 
 # -----------------------------
-# 10) Write output to LOCAL for UI (client mode)
+# 11) Write output for UI (client mode local)
 # -----------------------------
 if not os.path.exists(ui_base_dir):
     os.makedirs(ui_base_dir)
@@ -319,9 +318,5 @@ shutil.copy(part_files[0], ui_single_json_file)
 
 print("✅ Spark JSON folder :", spark_json_folder)
 print("✅ UI JSON file      :", ui_single_json_file)
-
-# Optional debug:
-# long_df.show(truncate=False)
-# final_df.show(truncate=False)
 
 spark.stop()
