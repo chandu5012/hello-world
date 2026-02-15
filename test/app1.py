@@ -3996,56 +3996,109 @@ def execute_mismatch_explorer_job(run_id, params, unix_config):
             
             # Immediately fetch report in the SAME SSH session (OTP safe)
             report_fetched = False
+            json_content = None
             json_filename = f'{run_id}_record_explorer.json'
             remote_path = f'/tmp/{json_filename}'
             
             try:
                 sftp = ssh_client.open_sftp()
-                try:
-                    with sftp.file(remote_path, 'r') as f:
-                        json_content = f.read().decode('utf-8')
-                    records = json.loads(json_content)
-                    report_fetched = True
-                except FileNotFoundError:
-                    add_log(run_id, f"❌ Report file not found in /tmp: {remote_path}")
-                    # Try alternative patterns
-                    for alt_path in [f'/tmp/{run_id}_mismatch.json', f'/tmp/record_explorer_{run_id}.json', f'/tmp/mismatch_{run_id}.json']:
-                        try:
-                            with sftp.file(alt_path, 'r') as f:
-                                json_content = f.read().decode('utf-8')
-                            records = json.loads(json_content)
-                            add_log(run_id, f"✅ Found alternative file: {alt_path}")
-                            report_fetched = True
-                            break
-                        except:
-                            continue
+                
+                # Retry stat() up to 5 times with 1s sleep (file write may finish slightly later)
+                file_found = False
+                for attempt in range(1, 6):
+                    try:
+                        sftp.stat(remote_path)
+                        file_found = True
+                        break
+                    except FileNotFoundError:
+                        add_log(run_id, f"Waiting for report file... attempt {attempt}/5")
+                        time.sleep(1)
+                
+                # If not found by stat, try ls to locate alternative filename
+                if not file_found:
+                    add_log(run_id, f"❌ Report file not found after 5 retries: {remote_path}")
+                    try:
+                        ls_stdin, ls_stdout, ls_stderr = ssh_client.exec_command(
+                            f'ls -1 /tmp | grep -E "{run_id}.*record_explorer\\.json"'
+                        )
+                        ls_output = ls_stdout.read().decode('utf-8').strip()
+                        if ls_output:
+                            # Use first match
+                            alt_name = ls_output.split('\n')[0].strip()
+                            remote_path = f'/tmp/{alt_name}'
+                            add_log(run_id, f"✅ Found alternative file via ls: {remote_path}")
+                            file_found = True
+                        else:
+                            # Log what's in /tmp for debugging
+                            ls2_stdin, ls2_stdout, ls2_stderr = ssh_client.exec_command(
+                                f'ls -1 /tmp | grep -i "{run_id}" | head -20'
+                            )
+                            ls2_output = ls2_stdout.read().decode('utf-8').strip()
+                            add_log(run_id, f"Report not found. Listing /tmp matches: {ls2_output if ls2_output else '(none)'}")
+                    except Exception as ls_err:
+                        add_log(run_id, f"⚠️ ls check failed: {str(ls_err)}")
+                
+                if file_found:
+                    try:
+                        with sftp.file(remote_path, 'r') as f:
+                            json_content = f.read().decode('utf-8')
+                        report_fetched = True
+                    except Exception as read_err:
+                        add_log(run_id, f"❌ Error reading report file: {str(read_err)}")
+                
                 sftp.close()
             except Exception as sftp_err:
                 add_log(run_id, f"❌ SFTP error: {str(sftp_err)}")
             
-            if report_fetched:
-                # Parse and cache results
-                summary_rows, details_cache, debug_info = parse_record_explorer_json(records, run_id)
-                add_log(run_id, f"📄 Report fetched successfully. Parsed records: {len(summary_rows)}")
+            if report_fetched and json_content:
+                # Robust JSON parsing: support JSON array/object OR JSON Lines
+                records = None
+                try:
+                    records = json.loads(json_content)
+                except json.JSONDecodeError as je:
+                    if 'Extra data' in str(je) or 'extra data' in str(je).lower():
+                        # Treat as JSON Lines
+                        try:
+                            lines = [l.strip() for l in json_content.strip().split('\n') if l.strip()]
+                            records = [json.loads(line) for line in lines]
+                            add_log(run_id, f"Detected JSON Lines format. Parsed {len(records)} records.")
+                        except Exception as jl_err:
+                            add_log(run_id, f"❌ JSON Lines parsing also failed: {str(jl_err)}")
+                            add_log(run_id, f"📝 Raw content (first 500 chars): {json_content[:500]}")
+                    else:
+                        add_log(run_id, f"❌ JSON parse error: {str(je)}")
+                        add_log(run_id, f"📝 Raw content (first 500 chars): {json_content[:500]}")
                 
-                job_id = f'job_{run_id}'
-                mismatch_jobs[job_id] = {
-                    'status': 'completed',
-                    'totalRecords': len(summary_rows),
-                    'summaryRows': summary_rows,
-                    'detailsCache': details_cache,
-                    'created_at': datetime.now()
-                }
-                run_registry[run_id]['cached_job_id'] = job_id
-                run_registry[run_id]['status'] = 'completed_with_results'
-                add_log(run_id, "💾 Results cached for Fetch & Compare (no SSH needed).")
-            else:
-                add_log(run_id, "❌ Report file not found in /tmp: " + remote_path)
+                if records is not None:
+                    # Ensure records is a list
+                    if isinstance(records, dict):
+                        records = [records]
+                    
+                    summary_rows, details_cache, debug_info = parse_record_explorer_json(records, run_id)
+                    add_log(run_id, f"📄 Report fetched successfully. Parsed records: {len(summary_rows)}")
+                    
+                    job_id = f'job_{run_id}'
+                    mismatch_jobs[job_id] = {
+                        'status': 'completed',
+                        'totalRecords': len(summary_rows),
+                        'summaryRows': summary_rows,
+                        'detailsCache': details_cache,
+                        'created_at': datetime.now()
+                    }
+                    run_registry[run_id]['cached_job_id'] = job_id
+                    run_registry[run_id]['status'] = 'completed_with_results'
+                    add_log(run_id, "💾 Results cached for Fetch & Compare (no SSH needed).")
+                else:
+                    add_log(run_id, "❌ Failed to parse report JSON. No results cached.")
+                    run_registry[run_id]['status'] = 'FAILED'
+            elif not report_fetched:
+                add_log(run_id, "❌ Report file could not be fetched from /tmp.")
                 run_registry[run_id]['status'] = 'FAILED'
         else:
             run_registry[run_id]['status'] = 'FAILED'
             add_log(run_id, f"❌ Execution failed with exit code: {exit_code}")
         
+        # Close SSH only AFTER report fetch attempts are complete
         ssh_client.close()
         add_log(run_id, "🔌 SSH connection closed")
         
