@@ -173,11 +173,11 @@ if len(join_cols) == 0:
     # Build normalized string list for hash and deterministic ordering
     src_norm_cols = []
     for c in compare_cols:
-        src_norm_cols.append(F.coalesce(_normalize_expr(F.col(c)), F.lit("∅")))
+        src_norm_cols.append(F.coalesce(_normalize_expr(F.col(c)), F.lit("__NULL__")))
 
     tgt_norm_cols = []
     for c in compare_cols:
-        tgt_norm_cols.append(F.coalesce(_normalize_expr(F.col(c)), F.lit("∅")))
+        tgt_norm_cols.append(F.coalesce(_normalize_expr(F.col(c)), F.lit("__NULL__")))
 
     source_df = source_df.withColumn("__row_hash", F.sha2(F.concat_ws("||", *src_norm_cols), 256))
     target_df = target_df.withColumn("__row_hash", F.sha2(F.concat_ws("||", *tgt_norm_cols), 256))
