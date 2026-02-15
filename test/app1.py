@@ -4086,13 +4086,16 @@ def execute_mismatch_explorer_job(run_id, params, unix_config):
                         'created_at': datetime.now()
                     }
                     run_registry[run_id]['cached_job_id'] = job_id
-                    run_registry[run_id]['status'] = 'completed_with_results'
+                    run_registry[run_id]['has_results'] = True
+                    run_registry[run_id]['status'] = 'SUCCESS'
                     add_log(run_id, "💾 Results cached for Fetch & Compare (no SSH needed).")
                 else:
                     add_log(run_id, "❌ Failed to parse report JSON. No results cached.")
+                    run_registry[run_id]['has_results'] = False
                     run_registry[run_id]['status'] = 'FAILED'
             elif not report_fetched:
                 add_log(run_id, "❌ Report file could not be fetched from /tmp.")
+                run_registry[run_id]['has_results'] = False
                 run_registry[run_id]['status'] = 'FAILED'
         else:
             run_registry[run_id]['status'] = 'FAILED'
@@ -4108,6 +4111,24 @@ def execute_mismatch_explorer_job(run_id, params, unix_config):
         print(f"Error in execute_mismatch_explorer_job: {str(e)}")
     
     run_registry[run_id]['finished_at'] = datetime.now()
+
+
+@app.route('/api/mismatch-explorer/status', methods=['GET'])
+def mismatch_explorer_status():
+    """Lightweight status endpoint for Mismatch Explorer polling."""
+    run_id = request.args.get('runId', '')
+    if not run_id or run_id not in run_registry:
+        return jsonify({'error': 'Run ID not found'}), 404
+    entry = run_registry[run_id]
+    status = entry.get('status', 'PENDING')
+    has_results = entry.get('has_results', False)
+    is_running = status in ('PENDING', 'RUNNING')
+    return jsonify({
+        'runId': run_id,
+        'status': status,
+        'hasResults': has_results,
+        'isRunning': is_running
+    })
 
 
 @app.route('/api/mismatch-explorer/fetch/<run_id>', methods=['GET'])
