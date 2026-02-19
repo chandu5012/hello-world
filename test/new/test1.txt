@@ -1,0 +1,7 @@
+command = (
+    f"su - {shlex.quote(batch_id.strip())} "
+    f"-s /usr/bin/ksh -c '"
+    f". /apps/run/etldsacd/dev/.profile && "
+    f"cd {shlex.quote(working_dir)} && "
+    f"ksh run_mismatch_explorer.ksh"
+)
