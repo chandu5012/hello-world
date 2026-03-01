@@ -9,6 +9,7 @@ let currentTab = "comparison";
 let currentTableMode = "single";
 let jobComplete = false;
 let reportUrl = "";
+let reportFileName = "";
 
 // Primary Key dropdown HTML generator (reusable)
 function generatePrimaryKeyDropdown(prefix, focusColor) {
@@ -77,53 +78,109 @@ const TAB_API_MAP = {
 // SHARED DOWNLOAD HELPER – reliable browser download
 // ============================================================
 function downloadStaticFile(downloadUrl, filename) {
-  if (!downloadUrl) {
-    addLog("❌ No download URL available. Cannot download.");
-    return;
-  }
-  if (!filename) {
-    filename = downloadUrl.split('/').pop() || 'download';
+  var cleanUrl = typeof downloadUrl === "string" ? downloadUrl.trim() : "";
+  if (!cleanUrl) {
+    addLog("❌ Download failed: missing download URL.");
+    return Promise.resolve(false);
   }
 
-  addLog(`📥 Starting download: ${filename}`);
+  var resolvedFilename = typeof filename === "string" ? filename.trim() : "";
 
-  // Use blob-fetch so the browser always triggers a Save-As download
-  fetch(downloadUrl)
+  function deriveFilenameFromUrl(url) {
+    try {
+      var pathPart = (url || "").split("?")[0].split("#")[0];
+      var last = pathPart.split("/").pop();
+      return (last && last.trim()) ? last.trim() : "download";
+    } catch (_e) {
+      return "download";
+    }
+  }
+
+  function parseDispositionFilename(disposition) {
+    if (!disposition || typeof disposition !== "string") return "";
+
+    var utf8Match = disposition.match(/filename\*=UTF-8''([^;\n]+)/i);
+    if (utf8Match && utf8Match[1]) {
+      try {
+        return decodeURIComponent(utf8Match[1]).replace(/['"]/g, "").trim();
+      } catch (_e) {
+        return utf8Match[1].replace(/['"]/g, "").trim();
+      }
+    }
+
+    var basicMatch = disposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/i);
+    if (basicMatch && basicMatch[1]) {
+      return basicMatch[1].replace(/['"]/g, "").trim();
+    }
+
+    return "";
+  }
+
+  if (!resolvedFilename) {
+    resolvedFilename = deriveFilenameFromUrl(cleanUrl);
+  }
+
+  addLog("📥 Starting download: " + resolvedFilename);
+
+  var directTriggered = false;
+  try {
+    var directLink = document.createElement("a");
+    directLink.href = cleanUrl;
+    directLink.download = resolvedFilename;
+    directLink.style.display = "none";
+    document.body.appendChild(directLink);
+    directLink.click();
+    directLink.remove();
+    directTriggered = true;
+  } catch (directError) {
+    console.error("Direct download trigger failed:", directError);
+  }
+
+  return fetch(cleanUrl)
     .then(function (resp) {
       if (!resp.ok) {
-        throw new Error("Server returned " + resp.status + ": " + resp.statusText);
+        throw new Error("Download failed: " + resp.status);
       }
-      // Try to refine filename from Content-Disposition
+
       var disposition = resp.headers.get("Content-Disposition");
-      if (disposition) {
-        var m = disposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
-        if (m && m[1]) {
-          filename = m[1].replace(/['"]/g, '');
-        }
+      var dispositionFilename = parseDispositionFilename(disposition);
+      if (!resolvedFilename || resolvedFilename === "download" || resolvedFilename === "export") {
+        resolvedFilename = dispositionFilename || deriveFilenameFromUrl(cleanUrl);
       }
+
       return resp.blob();
     })
     .then(function (blob) {
       if (!blob || blob.size === 0) {
-        throw new Error("Downloaded file is empty (0 bytes).");
+        throw new Error("Downloaded file is empty");
       }
+
       var blobUrl = URL.createObjectURL(blob);
-      var a = document.createElement('a');
-      a.style.display = 'none';
-      a.href = blobUrl;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      // Keep the object URL alive long enough for the browser to start the download
+      var blobLink = document.createElement("a");
+      blobLink.href = blobUrl;
+      blobLink.download = resolvedFilename || "download";
+      blobLink.style.display = "none";
+      document.body.appendChild(blobLink);
+      blobLink.click();
+      blobLink.remove();
+
       setTimeout(function () {
-        document.body.removeChild(a);
         URL.revokeObjectURL(blobUrl);
       }, 5000);
-      addLog("✅ Download started: " + filename);
+
+      addLog("✅ Download started: " + (resolvedFilename || "download"));
+      return true;
     })
     .catch(function (error) {
+      if (directTriggered) {
+        addLog("✅ Download started: " + (resolvedFilename || "download"));
+        return true;
+      }
+
+      var errorMessage = (error && error.message) ? error.message : "Unknown download error";
       console.error("Download error:", error);
-      addLog("❌ Download failed: " + (error.message || "Unknown error"));
+      addLog("❌ Download failed: " + errorMessage);
+      return false;
     });
 }
 const databaseConfigs = {
@@ -3108,11 +3165,15 @@ function startLogStreaming(runId, button, operationType) {
               // Check if download is available (single_table mode)
               if (data.download_available && data.download_url) {
                 reportUrl = data.download_url;
+                reportFileName = (typeof data.download_filename === "string" && data.download_filename.trim())
+                  ? data.download_filename.trim()
+                  : "";
                 enableDownloadButton();
-                addLog(`📥 Download ready: ${data.download_filename || 'output.csv'}`);
+                addLog(`📥 Download ready: ${reportFileName || 'output.csv'}`);
                 addLog("✅ Comparison complete! Click 'Download Comparison Report' to save the file.");
               } else {
                 reportUrl = `/reports/comparison_${runId}.csv`;
+                reportFileName = "";
                 enableDownloadButton();
               }
             } else if (operationType === "Data Load") {
@@ -3551,6 +3612,7 @@ function initializeWebSocket() {
         if (data.report_path) {
           reportUrl = data.report_path;
         }
+        reportFileName = "";
         enableDownloadButton();
         addLog("✅ Comparison complete! Report ready to download.");
       }
@@ -3560,8 +3622,9 @@ function initializeWebSocket() {
       console.error("Operation error:", data);
       jobComplete = false;
       reportUrl = "";
+      reportFileName = "";
       disableDownloadButton();
-      addLog(`❌ Comparison failed: ${data.error}`);
+      addLog(`❌ Comparison failed: ${data.error || "Unknown comparison error"}`);
     });
 
     socket.on("error", function (error) {
@@ -3588,13 +3651,23 @@ function updateConnectionStatus() {
 
 // Add log message
 function addLog(message) {
+  var normalizedMessage = "";
+  if (typeof message === "string") {
+    normalizedMessage = message.trim();
+  } else if (message !== null && message !== undefined) {
+    normalizedMessage = String(message).trim();
+  }
+  if (!normalizedMessage) {
+    normalizedMessage = "No additional details provided.";
+  }
+
   // Handle messages that already have timestamps
   let logEntry;
-  if (message.startsWith("[")) {
-    logEntry = message;
+  if (normalizedMessage.startsWith("[")) {
+    logEntry = normalizedMessage;
   } else {
     const timestamp = new Date().toLocaleTimeString();
-    logEntry = `[${timestamp}] ${message}`;
+    logEntry = `[${timestamp}] ${normalizedMessage}`;
   }
 
   logs.push(logEntry);
@@ -3771,6 +3844,7 @@ function resetDownloadButton() {
   disableDownloadButton();
   jobComplete = false;
   reportUrl = "";
+  reportFileName = "";
 }
 
 function handleDownloadReport() {
@@ -3782,8 +3856,8 @@ function handleDownloadReport() {
   const downloadUrl = reportUrl.startsWith('/api/static/comparison/download/')
     ? reportUrl
     : `/api/download-report?path=${encodeURIComponent(reportUrl)}`;
-  
-  downloadStaticFile(downloadUrl, "comparison_report.csv");
+
+  downloadStaticFile(downloadUrl, reportFileName || "");
 }
 
 // ============================================================
@@ -4690,13 +4764,13 @@ function filterMismatchDetails() {
  */
 function exportMismatchRecord(pkValue) {
   if (!mismatchJobId) {
-    alert('No active job to export from');
+    addLog('❌ Export failed: no active job to export from');
     return;
   }
-  
-  // Trigger download
-  window.location.href = `/api/mismatch-explorer/export?jobId=${mismatchJobId}&pkValue=${encodeURIComponent(pkValue)}`;
-  addLog(`📥 Exporting comparison for PK: ${pkValue}`);
+
+  const exportUrl = `/api/mismatch-explorer/export?jobId=${mismatchJobId}&pkValue=${encodeURIComponent(pkValue)}`;
+  downloadStaticFile(exportUrl, "");
+  addLog(`📥 Exporting comparison for PK: ${pkValue || 'unknown'}`);
 }
 
 /**
