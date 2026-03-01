@@ -12,7 +12,7 @@ from queue import Queue
 from collections import defaultdict
 from datetime import datetime
 import tempfile
-from urllib.parse import quote
+
 
 # Excel parsing
 try:
@@ -1266,13 +1266,17 @@ def _determine_mimetype(filename):
         return 'application/octet-stream'
 
 
+def _sanitize_download_filename(filename):
+    """Return a safe attachment filename preserving extension when possible."""
+    safe_name = os.path.basename((filename or '').replace('\r', '').replace('\n', '').strip())
+    safe_name = safe_name.replace('"', '').replace(';', '_')
+    return safe_name or 'download'
+
+
 def _build_content_disposition(filename):
-    """Build robust Content-Disposition with ASCII fallback + RFC5987 UTF-8."""
-    safe_name = (filename or 'download').replace('\r', '').replace('\n', '').strip() or 'download'
-    ascii_fallback = ''.join(ch if ord(ch) < 128 else '_' for ch in safe_name)
-    ascii_fallback = ascii_fallback.replace('"', '') or 'download'
-    utf8_name = quote(safe_name)
-    return f'attachment; filename="{ascii_fallback}"; filename*=UTF-8\'\'{utf8_name}'
+    """Build conservative Content-Disposition for managed browsers."""
+    safe_name = _sanitize_download_filename(filename)
+    return f'attachment; filename="{safe_name}"'
 
 
 def serve_cached_download(run_id, expected_tab=None):
@@ -1300,8 +1304,10 @@ def serve_cached_download(run_id, expected_tab=None):
         if run_id in download_registry:
             cache_entry = download_registry[run_id]
             local_path = cache_entry['local_path']
-            download_filename = (cache_entry.get('download_name') or run_entry.get('download_filename') or os.path.basename(local_path) or 'download').strip()
-            
+            cached_basename = os.path.basename(local_path)
+            preferred_name = (cache_entry.get('download_name') or run_entry.get('download_filename') or '').strip()
+            download_filename = _sanitize_download_filename(cached_basename or preferred_name)
+
             if os.path.exists(local_path):
                 print(f"✅ Serving cached file: {local_path} as {download_filename}")
                 mimetype = _determine_mimetype(download_filename)
@@ -1320,6 +1326,7 @@ def serve_cached_download(run_id, expected_tab=None):
                 response.headers['Pragma'] = 'no-cache'
                 response.headers['Expires'] = '0'
                 response.headers['X-Content-Type-Options'] = 'nosniff'
+                response.headers['Content-Transfer-Encoding'] = 'binary'
                 return response
             else:
                 print(f"❌ Cached file missing: {local_path}")
