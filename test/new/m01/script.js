@@ -93,7 +93,6 @@ function triggerStaticDownload(downloadUrl, filename) {
     var baseName = trimmed.split(/[\\/]/).pop() || "";
     baseName = baseName.replace(/[\r\n]/g, "").replace(/["';]/g, "").trim();
     if (!baseName) return "";
-    // Reject run-id style names with no extension (causes UUID-like downloads on managed browsers)
     if (baseName.indexOf(".") < 1 || baseName.endsWith(".")) return "";
     return baseName;
   }
@@ -136,6 +135,60 @@ function triggerStaticDownload(downloadUrl, filename) {
     return parsed.pathname + parsed.search + parsed.hash;
   }
 
+  function extractRunIdFromStaticDownload(urlPath) {
+    var match = String(urlPath || "").match(/\/api\/static\/[^/]+\/download\/([^/?#]+)/i);
+    return (match && match[1]) ? decodeURIComponent(match[1]) : "";
+  }
+
+  function isLocalhostRuntime() {
+    var host = (window.location.hostname || "").toLowerCase();
+    return host === "localhost" || host === "127.0.0.1" || host === "::1";
+  }
+
+  function isGuidLikeFilename(name) {
+    var value = String(name || "").trim().toLowerCase();
+    if (!value) return true;
+    if (value.indexOf(".") < 1) return true;
+    return /^[0-9a-f]{8}[-_][0-9a-f]{4}[-_][0-9a-f]{4}[-_][0-9a-f]{4}[-_][0-9a-f]{12}(\.[a-z0-9]+)?$/i.test(value);
+  }
+
+  function saveToDownloadsFallback(runId, expectedFilename, reason) {
+    if (!runId || !isLocalhostRuntime()) {
+      return Promise.resolve(false);
+    }
+
+    return fetch("/api/local/save-to-downloads/" + encodeURIComponent(runId), {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        expected_filename: expectedFilename || "",
+        reason: reason || "download_fallback"
+      })
+    })
+      .then(function (resp) {
+        return resp.json().catch(function () { return {}; }).then(function (data) {
+          if (!resp.ok) {
+            var serverError = (data && data.error && String(data.error).trim()) ? String(data.error).trim() : ("HTTP " + resp.status);
+            throw new Error(serverError);
+          }
+          return data;
+        });
+      })
+      .then(function (data) {
+        var savedPath = (data && data.saved_path && String(data.saved_path).trim()) ? String(data.saved_path).trim() : "Downloads folder";
+        addLog("✅ Saved to Downloads: " + savedPath);
+        return true;
+      })
+      .catch(function (fallbackError) {
+        var fallbackMessage = (fallbackError && fallbackError.message && String(fallbackError.message).trim())
+          ? String(fallbackError.message).trim()
+          : "local save fallback failed";
+        addLog("❌ Download fallback failed: " + fallbackMessage);
+        return false;
+      });
+  }
+
   var normalizedUrl = "";
   try {
     normalizedUrl = toSameOriginRelativeUrl(cleanUrl);
@@ -145,36 +198,26 @@ function triggerStaticDownload(downloadUrl, filename) {
     return Promise.resolve(false);
   }
 
-  var displayFilename = normalizeFilename(requestedFilename) || deriveFilenameFromUrl(normalizedUrl) || "download";
+  var displayFilename = normalizeFilename(requestedFilename) || deriveFilenameFromUrl(normalizedUrl) || "download.bin";
+  var runId = extractRunIdFromStaticDownload(normalizedUrl);
   addLog("📥 Starting download: " + displayFilename);
 
-  // Primary path for managed/enterprise browsers: native same-tab navigation
   try {
     window.location.assign(normalizedUrl);
     addLog("✅ Download triggered: " + displayFilename);
+
+    if (runId && isLocalhostRuntime()) {
+      setTimeout(function () {
+        saveToDownloadsFallback(runId, displayFilename, "post_navigation_localhost_backup");
+      }, 1500);
+    }
+
     return Promise.resolve(true);
   } catch (navigationError) {
     console.error("Native download navigation failed:", navigationError);
     addLog("⚠️ Native download navigation failed, trying fallback method.");
   }
 
-  // Secondary path: same-tab anchor click
-  try {
-    var directLink = document.createElement("a");
-    directLink.href = normalizedUrl;
-    directLink.target = "_self";
-    directLink.style.display = "none";
-    document.body.appendChild(directLink);
-    directLink.click();
-    directLink.remove();
-
-    addLog("✅ Download triggered: " + displayFilename);
-    return Promise.resolve(true);
-  } catch (directError) {
-    console.error("Anchor download trigger failed:", directError);
-  }
-
-  // Fallback path: blob download
   return fetch(normalizedUrl, {
     method: "GET",
     credentials: "same-origin",
@@ -216,6 +259,13 @@ function triggerStaticDownload(downloadUrl, filename) {
       }, 5000);
 
       addLog("✅ Download triggered: " + fallbackFilename);
+
+      if (runId && isLocalhostRuntime() && isGuidLikeFilename(fallbackFilename)) {
+        return saveToDownloadsFallback(runId, displayFilename, "guid_like_filename_detected").then(function () {
+          return true;
+        });
+      }
+
       return true;
     })
     .catch(function (error) {
@@ -224,6 +274,11 @@ function triggerStaticDownload(downloadUrl, filename) {
         : "Unknown download error";
       console.error("Download error:", error);
       addLog("❌ Download failed: " + errorMessage);
+
+      if (runId && isLocalhostRuntime()) {
+        return saveToDownloadsFallback(runId, displayFilename, "download_error");
+      }
+
       return false;
     });
 }
