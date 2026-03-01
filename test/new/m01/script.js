@@ -74,45 +74,57 @@ const TAB_API_MAP = {
 };
 
 // ============================================================
-// SHARED DOWNLOAD HELPER - blob-based browser download
+// SHARED DOWNLOAD HELPER – reliable browser download
 // ============================================================
-async function downloadStaticFile(downloadUrl, filename) {
+function downloadStaticFile(downloadUrl, filename) {
   if (!downloadUrl) {
-    addLog("❌ No download URL available");
+    addLog("❌ No download URL available. Cannot download.");
     return;
   }
-  try {
-    addLog(`📥 Downloading ${filename}...`);
-    const resp = await fetch(downloadUrl);
-    if (!resp.ok) {
-      throw new Error(`Server returned ${resp.status}: ${resp.statusText}`);
-    }
-    const blob = await resp.blob();
-    // Try to get filename from Content-Disposition header if not provided
-    const disposition = resp.headers.get("Content-Disposition");
-    if (disposition && !filename) {
-      const match = disposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
-      if (match && match[1]) {
-        filename = match[1].replace(/['"]/g, '');
-      }
-    }
-    if (!filename) {
-      // Derive from URL path
-      filename = downloadUrl.split('/').pop() || 'download';
-    }
-    const blobUrl = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = blobUrl;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
-    addLog(`✅ Downloaded: ${filename}`);
-  } catch (error) {
-    console.error("Download error:", error);
-    addLog(`❌ Download failed: ${error.message}`);
+  if (!filename) {
+    filename = downloadUrl.split('/').pop() || 'download';
   }
+
+  addLog(`📥 Starting download: ${filename}`);
+
+  // Use blob-fetch so the browser always triggers a Save-As download
+  fetch(downloadUrl)
+    .then(function (resp) {
+      if (!resp.ok) {
+        throw new Error("Server returned " + resp.status + ": " + resp.statusText);
+      }
+      // Try to refine filename from Content-Disposition
+      var disposition = resp.headers.get("Content-Disposition");
+      if (disposition) {
+        var m = disposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
+        if (m && m[1]) {
+          filename = m[1].replace(/['"]/g, '');
+        }
+      }
+      return resp.blob();
+    })
+    .then(function (blob) {
+      if (!blob || blob.size === 0) {
+        throw new Error("Downloaded file is empty (0 bytes).");
+      }
+      var blobUrl = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.style.display = 'none';
+      a.href = blobUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      // Keep the object URL alive long enough for the browser to start the download
+      setTimeout(function () {
+        document.body.removeChild(a);
+        URL.revokeObjectURL(blobUrl);
+      }, 5000);
+      addLog("✅ Download started: " + filename);
+    })
+    .catch(function (error) {
+      console.error("Download error:", error);
+      addLog("❌ Download failed: " + (error.message || "Unknown error"));
+    });
 }
 const databaseConfigs = {
   PostgreSQL: {
