@@ -139,7 +139,16 @@ function triggerStaticDownload(downloadUrl, filename) {
 
   addLog("📥 Starting download: " + (resolvedFilename || "download"));
 
-  // Primary path for managed/enterprise browsers: same-origin direct navigation in same tab
+  // Primary path for managed/enterprise browsers: native same-tab navigation
+  try {
+    window.location.assign(normalizedUrl);
+    addLog("✅ Download triggered: " + (resolvedFilename || "download"));
+    return Promise.resolve(true);
+  } catch (navigationError) {
+    console.error("Native download navigation failed:", navigationError);
+  }
+
+  // Secondary path: same-tab anchor click
   try {
     var directLink = document.createElement("a");
     directLink.href = normalizedUrl;
@@ -153,10 +162,10 @@ function triggerStaticDownload(downloadUrl, filename) {
     addLog("✅ Download triggered: " + (resolvedFilename || "download"));
     return Promise.resolve(true);
   } catch (directError) {
-    console.error("Direct download trigger failed:", directError);
+    console.error("Anchor download trigger failed:", directError);
   }
 
-  // Fallback path: blob download (used only when direct trigger errors)
+  // Fallback path: blob download
   return fetch(normalizedUrl)
     .then(function (resp) {
       if (!resp.ok) {
