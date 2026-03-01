@@ -1276,10 +1276,9 @@ def _sanitize_download_filename(filename):
 
 
 def _build_content_disposition(filename):
-    """Build enterprise-safe Content-Disposition with filename + filename*."""
+    """Build explicit attachment disposition with resolved filename."""
     safe_name = _sanitize_download_filename(filename)
-    encoded_name = quote(safe_name, safe='')
-    return f"attachment; filename=\"{safe_name}\"; filename*=UTF-8''{encoded_name}"
+    return f"attachment; filename=\"{safe_name}\""
 
 
 def serve_cached_download(run_id, expected_tab=None):
@@ -1338,14 +1337,16 @@ def serve_cached_download(run_id, expected_tab=None):
                     )
 
                 response = make_response(file_response)
-                response.headers['Content-Disposition'] = _build_content_disposition(download_filename)
+                content_disposition = _build_content_disposition(download_filename)
+                response.headers['Content-Disposition'] = content_disposition
                 response.headers['Content-Type'] = mimetype
                 response.headers['Content-Length'] = str(os.path.getsize(local_path))
-                response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+                response.headers['Cache-Control'] = 'no-store'
                 response.headers['Pragma'] = 'no-cache'
                 response.headers['Expires'] = '0'
                 response.headers['X-Content-Type-Options'] = 'nosniff'
                 response.headers['Content-Transfer-Encoding'] = 'binary'
+                print(f"📦 Static download response: path={local_path} | filename={download_filename} | content_type={mimetype} | content_disposition={content_disposition}")
                 return response
             else:
                 print(f"❌ Cached file missing: {local_path}")
@@ -2020,6 +2021,18 @@ def static_filedownload_download(run_id):
     return serve_cached_download(run_id, 'file_download')
 
 
+@app.route('/api/static/fileload/download/<run_id>')
+def static_fileload_download(run_id):
+    """Download the generated file for File Load tab (from local cache, OTP-safe)."""
+    return serve_cached_download(run_id, 'file_load')
+
+
+@app.route('/api/static/db2db/download/<run_id>')
+def static_db2db_download(run_id):
+    """Download the generated file for DB to DB Load tab (from local cache, OTP-safe)."""
+    return serve_cached_download(run_id, 'data_load')
+
+
 # ============================================================
 # SCHEMA GENERATION TAB - WITH FILE UPLOAD ENDPOINT
 # ============================================================
@@ -2260,6 +2273,12 @@ def execute_schema_with_upload(run_id, params, file_content, original_filename, 
 def static_schema_download(run_id):
     """Download the generated schema file (from local cache, OTP-safe)."""
     return serve_cached_download(run_id, 'schema_generation')
+
+
+@app.route('/api/static/mismatch/download/<run_id>')
+def static_mismatch_download(run_id):
+    """Download the generated file for Mismatch Explorer tab (from local cache, OTP-safe)."""
+    return serve_cached_download(run_id, 'mismatch_explorer')
 
 
 # ============================================================
