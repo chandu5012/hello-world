@@ -75,9 +75,9 @@ const TAB_API_MAP = {
 };
 
 // ============================================================
-// SHARED DOWNLOAD HELPER – reliable browser download
+// SHARED DOWNLOAD HELPER – office-policy friendly static download
 // ============================================================
-function downloadStaticFile(downloadUrl, filename) {
+function triggerStaticDownload(downloadUrl, filename) {
   var cleanUrl = typeof downloadUrl === "string" ? downloadUrl.trim() : "";
   if (!cleanUrl) {
     addLog("❌ Download failed: missing download URL.");
@@ -116,27 +116,48 @@ function downloadStaticFile(downloadUrl, filename) {
     return "";
   }
 
-  if (!resolvedFilename) {
-    resolvedFilename = deriveFilenameFromUrl(cleanUrl);
+  function toSameOriginRelativeUrl(url) {
+    var parsed = new URL(url, window.location.origin);
+    if (parsed.origin !== window.location.origin) {
+      throw new Error("Download URL must be same-origin");
+    }
+    return parsed.pathname + parsed.search + parsed.hash;
   }
 
-  addLog("📥 Starting download: " + resolvedFilename);
+  var normalizedUrl = "";
+  try {
+    normalizedUrl = toSameOriginRelativeUrl(cleanUrl);
+  } catch (urlError) {
+    var urlErrorMessage = (urlError && urlError.message) ? urlError.message : "invalid download URL";
+    addLog("❌ Download failed: " + urlErrorMessage);
+    return Promise.resolve(false);
+  }
 
-  var directTriggered = false;
+  if (!resolvedFilename) {
+    resolvedFilename = deriveFilenameFromUrl(normalizedUrl);
+  }
+
+  addLog("📥 Starting download: " + (resolvedFilename || "download"));
+
+  // Primary path for managed/enterprise browsers: same-origin direct navigation in same tab
   try {
     var directLink = document.createElement("a");
-    directLink.href = cleanUrl;
-    directLink.download = resolvedFilename;
+    directLink.href = normalizedUrl;
+    directLink.download = resolvedFilename || "download";
+    directLink.target = "_self";
     directLink.style.display = "none";
     document.body.appendChild(directLink);
     directLink.click();
     directLink.remove();
-    directTriggered = true;
+
+    addLog("✅ Download triggered: " + (resolvedFilename || "download"));
+    return Promise.resolve(true);
   } catch (directError) {
     console.error("Direct download trigger failed:", directError);
   }
 
-  return fetch(cleanUrl)
+  // Fallback path: blob download (used only when direct trigger errors)
+  return fetch(normalizedUrl)
     .then(function (resp) {
       if (!resp.ok) {
         throw new Error("Download failed: " + resp.status);
@@ -145,7 +166,7 @@ function downloadStaticFile(downloadUrl, filename) {
       var disposition = resp.headers.get("Content-Disposition");
       var dispositionFilename = parseDispositionFilename(disposition);
       if (!resolvedFilename || resolvedFilename === "download" || resolvedFilename === "export") {
-        resolvedFilename = dispositionFilename || deriveFilenameFromUrl(cleanUrl);
+        resolvedFilename = dispositionFilename || deriveFilenameFromUrl(normalizedUrl);
       }
 
       return resp.blob();
@@ -159,6 +180,7 @@ function downloadStaticFile(downloadUrl, filename) {
       var blobLink = document.createElement("a");
       blobLink.href = blobUrl;
       blobLink.download = resolvedFilename || "download";
+      blobLink.target = "_self";
       blobLink.style.display = "none";
       document.body.appendChild(blobLink);
       blobLink.click();
@@ -168,20 +190,19 @@ function downloadStaticFile(downloadUrl, filename) {
         URL.revokeObjectURL(blobUrl);
       }, 5000);
 
-      addLog("✅ Download started: " + (resolvedFilename || "download"));
+      addLog("✅ Download triggered: " + (resolvedFilename || "download"));
       return true;
     })
     .catch(function (error) {
-      if (directTriggered) {
-        addLog("✅ Download started: " + (resolvedFilename || "download"));
-        return true;
-      }
-
       var errorMessage = (error && error.message) ? error.message : "Unknown download error";
       console.error("Download error:", error);
       addLog("❌ Download failed: " + errorMessage);
       return false;
     });
+}
+
+function downloadStaticFile(downloadUrl, filename) {
+  return triggerStaticDownload(downloadUrl, filename);
 }
 const databaseConfigs = {
   PostgreSQL: {
