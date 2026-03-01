@@ -141,7 +141,7 @@ function triggerStaticDownload(downloadUrl, filename) {
 
   // Primary path for managed/enterprise browsers: native same-tab navigation
   try {
-    window.location.assign(normalizedUrl);
+    window.location.href = normalizedUrl;
     addLog("✅ Download triggered: " + (resolvedFilename || "download"));
     return Promise.resolve(true);
   } catch (navigationError) {
@@ -169,7 +169,7 @@ function triggerStaticDownload(downloadUrl, filename) {
   return fetch(normalizedUrl)
     .then(function (resp) {
       if (!resp.ok) {
-        throw new Error("Download failed: " + resp.status);
+        throw new Error("Download failed: HTTP " + resp.status);
       }
 
       var disposition = resp.headers.get("Content-Disposition");
@@ -3879,15 +3879,11 @@ function resetDownloadButton() {
 
 function handleDownloadReport() {
   if (!reportUrl) {
-    addLog("❌ No report available to download");
+    addLog("❌ Download failed: no report URL available.");
     return;
   }
 
-  const downloadUrl = reportUrl.startsWith('/api/static/comparison/download/')
-    ? reportUrl
-    : `/api/download-report?path=${encodeURIComponent(reportUrl)}`;
-
-  downloadStaticFile(downloadUrl, reportFileName || "");
+  downloadStaticFile(reportUrl, reportFileName || "");
 }
 
 // ============================================================
