@@ -12,6 +12,7 @@ from queue import Queue
 from collections import defaultdict
 from datetime import datetime
 import tempfile
+from urllib.parse import quote
 
 # Excel parsing
 try:
@@ -1238,7 +1239,7 @@ def static_cached_download(run_id):
 
 def _determine_mimetype(filename):
     """Determine mimetype from filename extension."""
-    dl_lower = filename.lower()
+    dl_lower = (filename or '').lower()
     if dl_lower.endswith('.csv'):
         return 'text/csv'
     elif dl_lower.endswith('.json'):
@@ -1249,14 +1250,29 @@ def _determine_mimetype(filename):
         return 'application/sql'
     elif dl_lower.endswith('.txt'):
         return 'text/plain'
-    elif dl_lower.endswith('.xlsx') or dl_lower.endswith('.xls'):
+    elif dl_lower.endswith('.xlsx'):
         return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    elif dl_lower.endswith('.xls'):
+        return 'application/vnd.ms-excel'
     elif dl_lower.endswith('.tsv'):
         return 'text/tab-separated-values'
+    elif dl_lower.endswith('.pdf'):
+        return 'application/pdf'
+    elif dl_lower.endswith('.html') or dl_lower.endswith('.htm'):
+        return 'text/html'
     elif dl_lower.endswith('.zip'):
         return 'application/zip'
     else:
         return 'application/octet-stream'
+
+
+def _build_content_disposition(filename):
+    """Build robust Content-Disposition with ASCII fallback + RFC5987 UTF-8."""
+    safe_name = (filename or 'download').replace('\r', '').replace('\n', '').strip() or 'download'
+    ascii_fallback = ''.join(ch if ord(ch) < 128 else '_' for ch in safe_name)
+    ascii_fallback = ascii_fallback.replace('"', '') or 'download'
+    utf8_name = quote(safe_name)
+    return f'attachment; filename="{ascii_fallback}"; filename*=UTF-8\'\'{utf8_name}'
 
 
 def serve_cached_download(run_id, expected_tab=None):
@@ -1284,21 +1300,26 @@ def serve_cached_download(run_id, expected_tab=None):
         if run_id in download_registry:
             cache_entry = download_registry[run_id]
             local_path = cache_entry['local_path']
-            download_filename = cache_entry['download_name']
+            download_filename = (cache_entry.get('download_name') or run_entry.get('download_filename') or os.path.basename(local_path) or 'download').strip()
             
             if os.path.exists(local_path):
                 print(f"✅ Serving cached file: {local_path} as {download_filename}")
                 mimetype = _determine_mimetype(download_filename)
-                
                 response = make_response(send_file(
                     local_path,
                     mimetype=mimetype,
                     as_attachment=True,
-                    download_name=download_filename
+                    download_name=download_filename,
+                    conditional=False,
+                    etag=False,
+                    max_age=0
                 ))
-                response.headers['Content-Disposition'] = f'attachment; filename="{download_filename}"'
+                response.headers['Content-Disposition'] = _build_content_disposition(download_filename)
                 response.headers['Content-Type'] = mimetype
-                response.headers['Cache-Control'] = 'no-store'
+                response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+                response.headers['Pragma'] = 'no-cache'
+                response.headers['Expires'] = '0'
+                response.headers['X-Content-Type-Options'] = 'nosniff'
                 return response
             else:
                 print(f"❌ Cached file missing: {local_path}")
@@ -4252,11 +4273,18 @@ def mismatch_explorer_export():
         # Create response with CSV download
         safe_pk = pk_value.replace('|', '_').replace('/', '_').replace('\\', '_').replace(' ', '_')[:50]
         filename = f'mismatch_{safe_pk}.csv'
-        
+        disposition = _build_content_disposition(filename)
+
         return Response(
             csv_content,
             mimetype='text/csv',
-            headers={'Content-Disposition': f'attachment; filename="{filename}"'}
+            headers={
+                'Content-Disposition': disposition,
+                'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+                'Pragma': 'no-cache',
+                'Expires': '0',
+                'X-Content-Type-Options': 'nosniff'
+            }
         )
         
     except Exception as e:
