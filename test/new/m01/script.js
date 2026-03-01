@@ -84,15 +84,27 @@ function triggerStaticDownload(downloadUrl, filename) {
     return Promise.resolve(false);
   }
 
-  var resolvedFilename = typeof filename === "string" ? filename.trim() : "";
+  var requestedFilename = typeof filename === "string" ? filename.trim() : "";
+
+  function normalizeFilename(candidate) {
+    if (!candidate || typeof candidate !== "string") return "";
+    var trimmed = candidate.trim();
+    if (!trimmed) return "";
+    var baseName = trimmed.split(/[\\/]/).pop() || "";
+    baseName = baseName.replace(/[\r\n]/g, "").replace(/["';]/g, "").trim();
+    if (!baseName) return "";
+    // Reject run-id style names with no extension (causes UUID-like downloads on managed browsers)
+    if (baseName.indexOf(".") < 1 || baseName.endsWith(".")) return "";
+    return baseName;
+  }
 
   function deriveFilenameFromUrl(url) {
     try {
       var pathPart = (url || "").split("?")[0].split("#")[0];
       var last = pathPart.split("/").pop();
-      return (last && last.trim()) ? last.trim() : "download";
+      return normalizeFilename((last && last.trim()) ? last.trim() : "");
     } catch (_e) {
-      return "download";
+      return "";
     }
   }
 
@@ -102,15 +114,15 @@ function triggerStaticDownload(downloadUrl, filename) {
     var utf8Match = disposition.match(/filename\*=UTF-8''([^;\n]+)/i);
     if (utf8Match && utf8Match[1]) {
       try {
-        return decodeURIComponent(utf8Match[1]).replace(/['"]/g, "").trim();
+        return normalizeFilename(decodeURIComponent(utf8Match[1]).replace(/['"]/g, "").trim());
       } catch (_e) {
-        return utf8Match[1].replace(/['"]/g, "").trim();
+        return normalizeFilename(utf8Match[1].replace(/['"]/g, "").trim());
       }
     }
 
     var basicMatch = disposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/i);
     if (basicMatch && basicMatch[1]) {
-      return basicMatch[1].replace(/['"]/g, "").trim();
+      return normalizeFilename(basicMatch[1].replace(/['"]/g, "").trim());
     }
 
     return "";
@@ -133,16 +145,13 @@ function triggerStaticDownload(downloadUrl, filename) {
     return Promise.resolve(false);
   }
 
-  if (!resolvedFilename) {
-    resolvedFilename = deriveFilenameFromUrl(normalizedUrl);
-  }
-
-  addLog("📥 Starting download: " + (resolvedFilename || "download"));
+  var displayFilename = normalizeFilename(requestedFilename) || deriveFilenameFromUrl(normalizedUrl) || "download";
+  addLog("📥 Starting download: " + displayFilename);
 
   // Primary path for managed/enterprise browsers: native same-tab navigation
   try {
     window.location.href = normalizedUrl;
-    addLog("✅ Download triggered: " + (resolvedFilename || "download"));
+    addLog("✅ Download triggered: " + displayFilename);
     return Promise.resolve(true);
   } catch (navigationError) {
     console.error("Native download navigation failed:", navigationError);
@@ -158,14 +167,18 @@ function triggerStaticDownload(downloadUrl, filename) {
     directLink.click();
     directLink.remove();
 
-    addLog("✅ Download triggered: " + (resolvedFilename || "download"));
+    addLog("✅ Download triggered: " + displayFilename);
     return Promise.resolve(true);
   } catch (directError) {
     console.error("Anchor download trigger failed:", directError);
   }
 
   // Fallback path: blob download
-  return fetch(normalizedUrl)
+  return fetch(normalizedUrl, {
+    method: "GET",
+    credentials: "same-origin",
+    cache: "no-store"
+  })
     .then(function (resp) {
       if (!resp.ok) {
         throw new Error("Download failed: HTTP " + resp.status);
@@ -173,13 +186,16 @@ function triggerStaticDownload(downloadUrl, filename) {
 
       var disposition = resp.headers.get("Content-Disposition");
       var dispositionFilename = parseDispositionFilename(disposition);
-      if (!resolvedFilename || resolvedFilename === "download" || resolvedFilename === "export") {
-        resolvedFilename = dispositionFilename || deriveFilenameFromUrl(normalizedUrl);
-      }
+      var fallbackFilename = dispositionFilename || normalizeFilename(requestedFilename) || deriveFilenameFromUrl(normalizedUrl) || "download.bin";
 
-      return resp.blob();
+      return resp.blob().then(function (blob) {
+        return { blob: blob, fallbackFilename: fallbackFilename };
+      });
     })
-    .then(function (blob) {
+    .then(function (result) {
+      var blob = result.blob;
+      var fallbackFilename = result.fallbackFilename;
+
       if (!blob || blob.size === 0) {
         throw new Error("Downloaded file is empty");
       }
@@ -187,7 +203,7 @@ function triggerStaticDownload(downloadUrl, filename) {
       var blobUrl = URL.createObjectURL(blob);
       var blobLink = document.createElement("a");
       blobLink.href = blobUrl;
-      blobLink.download = resolvedFilename || "download";
+      blobLink.download = fallbackFilename;
       blobLink.target = "_self";
       blobLink.style.display = "none";
       document.body.appendChild(blobLink);
@@ -198,11 +214,13 @@ function triggerStaticDownload(downloadUrl, filename) {
         URL.revokeObjectURL(blobUrl);
       }, 5000);
 
-      addLog("✅ Download triggered: " + (resolvedFilename || "download"));
+      addLog("✅ Download triggered: " + fallbackFilename);
       return true;
     })
     .catch(function (error) {
-      var errorMessage = (error && error.message) ? error.message : "Unknown download error";
+      var errorMessage = (error && error.message && String(error.message).trim())
+        ? String(error.message).trim()
+        : "Unknown download error";
       console.error("Download error:", error);
       addLog("❌ Download failed: " + errorMessage);
       return false;
