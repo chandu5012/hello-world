@@ -12,6 +12,7 @@ from queue import Queue
 from collections import defaultdict
 from datetime import datetime
 import tempfile
+from urllib.parse import quote
 
 
 # Excel parsing
@@ -1270,13 +1271,15 @@ def _sanitize_download_filename(filename):
     """Return a safe attachment filename preserving extension when possible."""
     safe_name = os.path.basename((filename or '').replace('\r', '').replace('\n', '').strip())
     safe_name = safe_name.replace('"', '').replace(';', '_')
+    safe_name = ''.join(ch if 32 <= ord(ch) < 127 else '_' for ch in safe_name)
     return safe_name or 'download'
 
 
 def _build_content_disposition(filename):
-    """Build conservative Content-Disposition for managed browsers."""
+    """Build enterprise-safe Content-Disposition with filename + filename*."""
     safe_name = _sanitize_download_filename(filename)
-    return f'attachment; filename="{safe_name}"'
+    encoded_name = quote(safe_name, safe='')
+    return f"attachment; filename=\"{safe_name}\"; filename*=UTF-8''{encoded_name}"
 
 
 def serve_cached_download(run_id, expected_tab=None):
@@ -1311,17 +1314,33 @@ def serve_cached_download(run_id, expected_tab=None):
             if os.path.exists(local_path):
                 print(f"✅ Serving cached file: {local_path} as {download_filename}")
                 mimetype = _determine_mimetype(download_filename)
-                response = make_response(send_file(
-                    local_path,
-                    mimetype=mimetype,
-                    as_attachment=True,
-                    download_name=download_filename,
-                    conditional=False,
-                    etag=False,
-                    max_age=0
-                ))
+
+                try:
+                    file_response = send_file(
+                        local_path,
+                        mimetype=mimetype,
+                        as_attachment=True,
+                        download_name=download_filename,
+                        conditional=False,
+                        etag=False,
+                        max_age=0
+                    )
+                except TypeError:
+                    # Flask<2 compatibility
+                    file_response = send_file(
+                        local_path,
+                        mimetype=mimetype,
+                        as_attachment=True,
+                        attachment_filename=download_filename,
+                        conditional=False,
+                        etag=False,
+                        max_age=0
+                    )
+
+                response = make_response(file_response)
                 response.headers['Content-Disposition'] = _build_content_disposition(download_filename)
                 response.headers['Content-Type'] = mimetype
+                response.headers['Content-Length'] = str(os.path.getsize(local_path))
                 response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
                 response.headers['Pragma'] = 'no-cache'
                 response.headers['Expires'] = '0'
@@ -1330,6 +1349,16 @@ def serve_cached_download(run_id, expected_tab=None):
                 return response
             else:
                 print(f"❌ Cached file missing: {local_path}")
+        
+        # Cache miss
+        return jsonify({
+            'error': 'Cached file not available. The output file could not be fetched during execution. '
+                     'With OTP authentication, SSH reconnection is not possible.'
+        }), 404
+        
+    except Exception as e:
+        print(f"❌ Download error: {str(e)}")
+        return jsonify({'error': str(e)}), 500
         
         # Cache miss
         return jsonify({
@@ -4282,17 +4311,15 @@ def mismatch_explorer_export():
         filename = f'mismatch_{safe_pk}.csv'
         disposition = _build_content_disposition(filename)
 
-        return Response(
-            csv_content,
-            mimetype='text/csv',
-            headers={
-                'Content-Disposition': disposition,
-                'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
-                'Pragma': 'no-cache',
-                'Expires': '0',
-                'X-Content-Type-Options': 'nosniff'
-            }
-        )
+        response = make_response(csv_content)
+        response.headers['Content-Type'] = 'text/csv; charset=utf-8'
+        response.headers['Content-Disposition'] = disposition
+        response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
+        response.headers['X-Content-Type-Options'] = 'nosniff'
+        response.headers['Content-Transfer-Encoding'] = 'binary'
+        return response
         
     except Exception as e:
         print(f"Mismatch Explorer export error: {str(e)}")
