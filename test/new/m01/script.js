@@ -152,7 +152,6 @@ function triggerStaticDownload(downloadUrl, filename) {
   try {
     var directLink = document.createElement("a");
     directLink.href = normalizedUrl;
-    directLink.download = resolvedFilename || "download";
     directLink.target = "_self";
     directLink.style.display = "none";
     document.body.appendChild(directLink);
