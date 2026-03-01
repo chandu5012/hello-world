@@ -150,11 +150,12 @@ function triggerStaticDownload(downloadUrl, filename) {
 
   // Primary path for managed/enterprise browsers: native same-tab navigation
   try {
-    window.location.href = normalizedUrl;
+    window.location.assign(normalizedUrl);
     addLog("✅ Download triggered: " + displayFilename);
     return Promise.resolve(true);
   } catch (navigationError) {
     console.error("Native download navigation failed:", navigationError);
+    addLog("⚠️ Native download navigation failed, trying fallback method.");
   }
 
   // Secondary path: same-tab anchor click
