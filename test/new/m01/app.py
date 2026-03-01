@@ -7,6 +7,7 @@ import shlex
 import threading
 import uuid
 import os
+import shutil
 from io import StringIO, BytesIO
 from queue import Queue
 from collections import defaultdict
@@ -1281,6 +1282,19 @@ def _build_content_disposition(filename):
     return f"attachment; filename=\"{safe_name}\""
 
 
+def _is_localhost_host(host_value):
+    host = (host_value or '').strip().lower()
+    if ':' in host:
+        host = host.split(':', 1)[0]
+    return host in ('127.0.0.1', 'localhost', '::1')
+
+
+def _resolve_local_downloads_dir():
+    """Resolve local OS Downloads directory for localhost fallback copy."""
+    home_dir = os.path.expanduser('~')
+    return os.path.join(home_dir, 'Downloads')
+
+
 def serve_cached_download(run_id, expected_tab=None):
     """
     Serve a cached download file. No SSH connection needed.
@@ -1315,7 +1329,7 @@ def serve_cached_download(run_id, expected_tab=None):
                 mimetype = _determine_mimetype(download_filename)
 
                 try:
-                    file_response = send_file(
+                    response = send_file(
                         local_path,
                         mimetype=mimetype,
                         as_attachment=True,
@@ -1326,7 +1340,7 @@ def serve_cached_download(run_id, expected_tab=None):
                     )
                 except TypeError:
                     # Flask<2 compatibility
-                    file_response = send_file(
+                    response = send_file(
                         local_path,
                         mimetype=mimetype,
                         as_attachment=True,
@@ -1336,7 +1350,6 @@ def serve_cached_download(run_id, expected_tab=None):
                         max_age=0
                     )
 
-                response = make_response(file_response)
                 content_disposition = _build_content_disposition(download_filename)
                 response.headers['Content-Disposition'] = content_disposition
                 response.headers['Content-Type'] = mimetype
@@ -2279,6 +2292,43 @@ def static_schema_download(run_id):
 def static_mismatch_download(run_id):
     """Download the generated file for Mismatch Explorer tab (from local cache, OTP-safe)."""
     return serve_cached_download(run_id, 'mismatch_explorer')
+
+
+@app.route('/api/local/save-to-downloads/<run_id>', methods=['POST'])
+def save_cached_file_to_local_downloads(run_id):
+    """Localhost-only fallback: copy cached static output to OS Downloads folder."""
+    try:
+        if not _is_localhost_host(request.host):
+            return jsonify({'error': 'Local save fallback is only available on localhost.'}), 403
+
+        if run_id not in run_registry:
+            return jsonify({'error': 'Run ID not found'}), 404
+
+        if run_id not in download_registry:
+            return jsonify({'error': 'No cached file available for this run'}), 404
+
+        cache_entry = download_registry[run_id]
+        local_path = cache_entry.get('local_path', '')
+        if not local_path or not os.path.exists(local_path):
+            return jsonify({'error': 'Cached file path is missing or not found'}), 404
+
+        download_filename = _sanitize_download_filename(os.path.basename(local_path) or cache_entry.get('download_name') or run_registry[run_id].get('download_filename') or f'{run_id}.bin')
+        downloads_dir = _resolve_local_downloads_dir()
+        os.makedirs(downloads_dir, exist_ok=True)
+
+        destination_path = os.path.join(downloads_dir, download_filename)
+        shutil.copy2(local_path, destination_path)
+
+        print(f"📁 Local fallback copy complete: source={local_path} | destination={destination_path} | filename={download_filename}")
+        return jsonify({
+            'success': True,
+            'saved_path': destination_path,
+            'filename': download_filename
+        })
+
+    except Exception as e:
+        print(f"❌ Local save-to-downloads error: {str(e)}")
+        return jsonify({'error': str(e)}), 500
 
 
 # ============================================================
