@@ -23,14 +23,14 @@ cteAUDData AS (
         ROW_NUMBER() OVER (
             PARTITION BY
                 acct_num,
-                add_months(trunc(CAST(date_created AS DATE), 'MM'), -(NUM.idx + 1))
+                add_months(trunc(to_date(date_created), 'MM'), -(NUM.idx + 1))
             ORDER BY
-                CAST(date_created AS DATE) DESC
+                to_date(date_created) DESC
         ) AS RowNum,
         CAST(TRIM(acct_num) AS BIGINT) AS AccountNumber,
         aud_id AS AUD_ID,
-        CAST(date_created AS DATE) AS EventDate,
-        add_months(trunc(CAST(date_created AS DATE), 'MM'), -(NUM.idx + 1)) AS PHPDate,
+        to_date(date_created) AS EventDate,
+        add_months(trunc(to_date(date_created), 'MM'), -(NUM.idx + 1)) AS PHPDate,
         substr(seven_year_payment_history, NUM.idx + 1, 1) AS PHPValue
     FROM hive_dsas_fnsh_sanitized.eoscar_aud_hist
     JOIN cteNumbers NUM
@@ -40,7 +40,7 @@ cteAUDData AS (
         AND coalesce(seven_year_payment_history, '') <> ''
         AND regexp_replace(seven_year_payment_history, '-', '') <> ''
         AND date_created IS NOT NULL
-        AND CAST(date_created AS DATE) > add_months(current_date, -85)
+        AND to_date(date_created) > add_months(current_date, -85)
         AND date_opened IS NOT NULL
         AND CAST(TRIM(acct_num) AS BIGINT) IS NOT NULL
 ),
