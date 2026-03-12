@@ -45,32 +45,40 @@ cteAUDData AS (
         AND CAST(TRIM(acct_num) AS BIGINT) IS NOT NULL
 ),
 
-cteAUDChk AS (
-    SELECT DISTINCT
-        a.AccountNumber,
-        a.PHPDate
-    FROM cteAUDData a
-    JOIN cteAUDData b
-      ON a.AccountNumber = b.AccountNumber
-     AND a.PHPDate = b.PHPDate
-     AND b.RowNum > 1
-     AND b.PHPValue <> a.PHPValue
-    WHERE a.RowNum = 1
+cteAUDSummary AS (
+    SELECT
+        AccountNumber,
+        PHPDate,
+        COUNT(*) AS grp_cnt,
+        MIN(PHPValue) AS min_php,
+        MAX(PHPValue) AS max_php
+    FROM cteAUDData
+    GROUP BY AccountNumber, PHPDate
+),
+
+cteAUDBase AS (
+    SELECT
+        AccountNumber,
+        AUD_ID,
+        EventDate,
+        PHPDate,
+        PHPValue
+    FROM cteAUDData
+    WHERE RowNum = 1
+      AND PHPDate > add_months(current_date, -85)
 )
 
 SELECT
-    a.AccountNumber,
-    a.AUD_ID,
-    a.EventDate,
-    a.PHPDate,
+    b.AccountNumber,
+    b.AUD_ID,
+    b.EventDate,
+    b.PHPDate,
     CASE
-        WHEN c.AccountNumber IS NOT NULL THEN 'C'
-        ELSE a.PHPValue
+        WHEN s.grp_cnt > 1 AND s.min_php <> s.max_php THEN 'C'
+        ELSE b.PHPValue
     END AS PHPValue,
-    date_format(a.PHPDate, 'yyyy-MM') AS php_month
-FROM cteAUDData a
-LEFT JOIN cteAUDChk c
-  ON a.AccountNumber = c.AccountNumber
- AND a.PHPDate = c.PHPDate
-WHERE a.RowNum = 1
-  AND a.PHPDate > add_months(current_date, -85);
+    date_format(b.PHPDate, 'yyyy-MM') AS php_month
+FROM cteAUDBase b
+JOIN cteAUDSummary s
+  ON b.AccountNumber = s.AccountNumber
+ AND b.PHPDate = s.PHPDate;
