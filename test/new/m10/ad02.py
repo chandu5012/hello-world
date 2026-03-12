@@ -18,34 +18,51 @@ WITH cteNumbers AS (
     ) AS idx
 ),
 
-cteAUDData AS (
+base_data AS (
     SELECT
-        ROW_NUMBER() OVER (
-            PARTITION BY
-                acct_num,
-                add_months(trunc(to_date(date_created), 'MM'), -(NUM.idx + 1))
-            ORDER BY
-                to_date(date_created) DESC
-        ) AS RowNum,
-        CAST(TRIM(acct_num) AS BIGINT) AS AccountNumber,
-        aud_id AS AUD_ID,
+        acct_num,
+        aud_id,
+        date_created,
+        date_opened,
+        seven_year_payment_history,
+        idx,
         to_date(date_created) AS EventDate,
-        add_months(trunc(to_date(date_created), 'MM'), -(NUM.idx + 1)) AS PHPDate,
-        substr(seven_year_payment_history, NUM.idx + 1, 1) AS PHPValue
+        add_months(trunc(to_date(date_created), 'MM'), -(idx + 1)) AS PHPDate,
+        substr(seven_year_payment_history, idx + 1, 1) AS PHPValue,
+        CAST(TRIM(acct_num) AS BIGINT) AS AccountNumber
     FROM hive_dsas_fnsh_sanitized.eoscar_aud_hist
-    JOIN cteNumbers NUM
+    JOIN cteNumbers
       ON 1 = 1
+),
+
+filtered_data AS (
+    SELECT *
+    FROM base_data
     WHERE
-        coalesce(substr(seven_year_payment_history, NUM.idx + 1, 1), '') NOT IN ('', '-')
+        coalesce(PHPValue, '') NOT IN ('', '-')
         AND coalesce(seven_year_payment_history, '') <> ''
         AND regexp_replace(seven_year_payment_history, '-', '') <> ''
         AND date_created IS NOT NULL
-        AND to_date(date_created) > add_months(current_date, -85)
+        AND EventDate > add_months(current_date, -85)
         AND date_opened IS NOT NULL
-        AND CAST(TRIM(acct_num) AS BIGINT) IS NOT NULL
+        AND AccountNumber IS NOT NULL
 ),
 
-cteAUDBaseR1 AS (
+cteAUDData AS (
+    SELECT
+        ROW_NUMBER() OVER (
+            PARTITION BY acct_num, PHPDate
+            ORDER BY EventDate DESC
+        ) AS RowNum,
+        AccountNumber,
+        aud_id AS AUD_ID,
+        EventDate,
+        PHPDate,
+        PHPValue
+    FROM filtered_data
+),
+
+base_r1 AS (
     SELECT
         AccountNumber,
         AUD_ID,
@@ -56,7 +73,7 @@ cteAUDBaseR1 AS (
     WHERE RowNum = 1
 ),
 
-cteAUDChk AS (
+chk_data AS (
     SELECT
         AccountNumber,
         PHPDate,
@@ -65,7 +82,7 @@ cteAUDChk AS (
     WHERE RowNum > 1
 ),
 
-cteAUDJoined AS (
+final_data AS (
     SELECT
         b.AccountNumber,
         b.AUD_ID,
@@ -75,8 +92,8 @@ cteAUDJoined AS (
             WHEN c.AccountNumber IS NOT NULL THEN 'C'
             ELSE b.PHPValue
         END AS PHPValue
-    FROM cteAUDBaseR1 b
-    LEFT JOIN cteAUDChk c
+    FROM base_r1 b
+    LEFT JOIN chk_data c
       ON b.AccountNumber = c.AccountNumber
      AND b.PHPDate = c.PHPDate
      AND b.PHPValue <> c.PHPValue
@@ -89,5 +106,5 @@ SELECT DISTINCT
     PHPDate,
     PHPValue,
     date_format(PHPDate, 'yyyy-MM') AS php_month
-FROM cteAUDJoined
+FROM final_data
 WHERE PHPDate > add_months(current_date, -85);
