@@ -40,7 +40,7 @@ cteAUDData AS (
         AND coalesce(seven_year_payment_history, '') <> ''
         AND regexp_replace(seven_year_payment_history, '-', '') <> ''
         AND date_created IS NOT NULL
-        AND CAST(date_created AS DATE) > add_months(current_date, -85)
+        AND date_created > add_months(current_timestamp(), -85)
         AND date_opened IS NOT NULL
         AND CAST(TRIM(acct_num) AS BIGINT) IS NOT NULL
 ),
