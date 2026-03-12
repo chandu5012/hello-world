@@ -40,12 +40,12 @@ cteAUDData AS (
         AND coalesce(seven_year_payment_history, '') <> ''
         AND regexp_replace(seven_year_payment_history, '-', '') <> ''
         AND date_created IS NOT NULL
-        AND date_created > add_months(current_timestamp(), -85)
+        AND CAST(date_created AS DATE) > add_months(current_date, -85)
         AND date_opened IS NOT NULL
         AND CAST(TRIM(acct_num) AS BIGINT) IS NOT NULL
 ),
 
-cteAUDBase AS (
+cteAUDBaseR1 AS (
     SELECT
         AccountNumber,
         AUD_ID,
@@ -54,33 +54,40 @@ cteAUDBase AS (
         PHPValue
     FROM cteAUDData
     WHERE RowNum = 1
-      AND PHPDate > add_months(current_date, -85)
 ),
 
 cteAUDChk AS (
-    SELECT DISTINCT
-        a.AccountNumber,
-        a.PHPDate
-    FROM cteAUDData a
-    JOIN cteAUDData b
-      ON a.AccountNumber = b.AccountNumber
-     AND a.PHPDate = b.PHPDate
-     AND b.RowNum > 1
-     AND b.PHPValue <> a.PHPValue
-    WHERE a.RowNum = 1
+    SELECT
+        AccountNumber,
+        PHPDate,
+        PHPValue
+    FROM cteAUDData
+    WHERE RowNum > 1
+),
+
+cteAUDJoined AS (
+    SELECT
+        b.AccountNumber,
+        b.AUD_ID,
+        b.EventDate,
+        b.PHPDate,
+        CASE
+            WHEN c.AccountNumber IS NOT NULL THEN 'C'
+            ELSE b.PHPValue
+        END AS PHPValue
+    FROM cteAUDBaseR1 b
+    LEFT JOIN cteAUDChk c
+      ON b.AccountNumber = c.AccountNumber
+     AND b.PHPDate = c.PHPDate
+     AND b.PHPValue <> c.PHPValue
 )
 
-SELECT
-    b.AccountNumber,
-    b.AUD_ID,
-    b.EventDate,
-    b.PHPDate,
-    CASE
-        WHEN c.AccountNumber IS NOT NULL THEN 'C'
-        ELSE b.PHPValue
-    END AS PHPValue,
-    date_format(b.PHPDate, 'yyyy-MM') AS php_month
-FROM cteAUDBase b
-LEFT JOIN cteAUDChk c
-  ON b.AccountNumber = c.AccountNumber
- AND b.PHPDate = c.PHPDate;
+SELECT DISTINCT
+    AccountNumber,
+    AUD_ID,
+    EventDate,
+    PHPDate,
+    PHPValue,
+    date_format(PHPDate, 'yyyy-MM') AS php_month
+FROM cteAUDJoined
+WHERE PHPDate > add_months(current_date, -85);
