@@ -1,0 +1,189 @@
+class sourceTargetCompare():
+
+    def split_sqlserver_cte_query(self, full_sql):
+        """
+        Split a SQL Server CTE query into:
+        1. prepareQuery part -> WITH ... CTE definitions
+        2. query part        -> main SELECT ...
+
+        If query is normal (no WITH), returns:
+            (None, cleaned_sql)
+        """
+
+        if full_sql is None or not str(full_sql).strip():
+            raise Exception("SOURCE_QUERY is empty")
+
+        sql = str(full_sql).strip().rstrip(";")
+        sql_upper = sql.upper()
+
+        # Normal query
+        if not (sql_upper.startswith("WITH ") or sql_upper.startswith(";WITH ")):
+            return None, sql
+
+        # Remove leading semicolon if present
+        if sql_upper.startswith(";WITH "):
+            sql = sql[1:].lstrip()
+
+        depth = 0
+        i = 0
+        select_pos = -1
+        length = len(sql)
+
+        while i < length:
+            ch = sql[i]
+
+            # Skip string literals
+            if ch == "'":
+                i += 1
+                while i < length:
+                    if sql[i] == "'":
+                        if i + 1 < length and sql[i + 1] == "'":
+                            i += 2
+                            continue
+                        i += 1
+                        break
+                    i += 1
+                continue
+
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+
+            # Find first top-level SELECT after CTE definitions
+            if depth == 0 and sql[i:i + 6].upper() == "SELECT":
+                select_pos = i
+                break
+
+            i += 1
+
+        if select_pos == -1:
+            raise Exception("Unable to split SQL Server CTE query. Top-level SELECT not found.")
+
+        prepare_query = sql[:select_pos].strip()
+        main_query = sql[select_pos:].strip()
+
+        if not prepare_query.upper().startswith("WITH "):
+            raise Exception("Invalid prepareQuery split.")
+        if not main_query.upper().startswith("SELECT "):
+            raise Exception("Invalid main query split.")
+
+        return prepare_query, main_query
+
+    def handler(self):
+
+        ############################################################ SOURCE ############################################################
+
+        if self.SOURCE_TYPE in ['oracle', 'sqlserver', 'teradata']:
+
+            log.info('INFO ==========> connecting the source ==========>')
+
+            base_reader = (
+                spark.read.format("jdbc")
+                .option("url", self.SOURCE_URL)
+                .option("user", self.SOURCE_USER)
+                .option("password", self.SOURCE_PSWD)
+                .option("numPartitions", 4)
+                .option("fetchsize", 100000)
+                .option("driver", driver)
+            )
+
+            source_query = str(self.SOURCE_QUERY).strip().rstrip(";")
+
+            # SQL Server special handling for CTE query in Spark 3.3
+            if self.SOURCE_TYPE == 'sqlserver':
+                prepare_query, main_query = self.split_sqlserver_cte_query(source_query)
+
+                if prepare_query:
+                    log.info('INFO ==========> SQL Server CTE detected. Using prepareQuery + query ==========>')
+
+                    source_df = (
+                        base_reader
+                        .option("prepareQuery", prepare_query)
+                        .option("query", main_query)
+                        .load()
+                    )
+                else:
+                    source_df = (
+                        base_reader
+                        .option("query", main_query)
+                        .load()
+                    )
+
+            else:
+                # Oracle / Teradata / normal JDBC query path
+                source_df = (
+                    base_reader
+                    .option("query", source_query)
+                    .load()
+                )
+
+            log.info('INFO ==========> data extracted successfully from the source ==========>')
+
+            ############################################################ PK ############################################################
+
+            SOURCE_PK = self.SOURCE_PK.strip()
+
+            if SOURCE_PK == 'N/A' or self.SOURCE_PK == 'NA':
+                primary_key_columns = []
+
+            elif self.SOURCE_PK == 'key is avilable but not sure':
+                if self.SOURCE_TYPE == 'oracle':
+                    PK_QUERY = """SELECT
+                                    COLS.COLUMN_NAME as pk_cols
+                                  FROM ALL_TAB_COLUMNS COLS
+                                  LEFT JOIN ALL_CONSTRAINTS CONS
+                                    ON COLS.OWNER = CONS.OWNER
+                                   AND COLS.TABLE_NAME = CONS.TABLE_NAME
+                                  LEFT JOIN ALL_CONS_COLUMNS CON_COLS
+                                    ON CONS.CONSTRAINT_NAME = CON_COLS.CONSTRAINT_NAME
+                                   AND COLS.COLUMN_NAME = CON_COLS.COLUMN_NAME
+                                 WHERE CONS.CONSTRAINT_TYPE = 'P'
+                                   AND COLS.OWNER = '{0}'
+                                   AND COLS.TABLE_NAME = '{1}'""".format(
+                        self.SOURCE_SCHEMA.upper(),
+                        self.SOURCE_TABLE.upper()
+                    )
+
+                elif self.SOURCE_TYPE == 'sqlserver':
+                    PK_QUERY = """SELECT
+                                    c.COLUMN_NAME as pk_cols
+                                  FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
+                                  JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE c
+                                    ON tc.CONSTRAINT_NAME = c.CONSTRAINT_NAME
+                                   AND tc.TABLE_SCHEMA = c.TABLE_SCHEMA
+                                 WHERE tc.CONSTRAINT_TYPE = 'PRIMARY KEY'
+                                   AND tc.TABLE_SCHEMA = '{0}'
+                                   AND tc.TABLE_NAME = '{1}'""".format(
+                        self.SOURCE_SCHEMA,
+                        self.SOURCE_TABLE
+                    )
+
+                elif self.SOURCE_TYPE == 'teradata':
+                    PK_QUERY = """SELECT ColumnName as pk_cols
+                                  FROM DBC.IndicesV
+                                  WHERE DatabaseName = '{0}'
+                                    AND TableName = '{1}'
+                                    AND IndexType = 'K'""".format(
+                        self.SOURCE_SCHEMA,
+                        self.SOURCE_TABLE
+                    )
+
+                pk_df = (
+                    spark.read.format("jdbc")
+                    .option("url", self.SOURCE_URL)
+                    .option("user", self.SOURCE_USER)
+                    .option("password", self.SOURCE_PSWD)
+                    .option("driver", driver)
+                    .option("query", PK_QUERY.strip().rstrip(";"))
+                    .load()
+                )
+
+                primary_key_columns = [row["pk_cols"] for row in pk_df.collect()]
+
+            else:
+                primary_key_columns = [col.strip() for col in self.SOURCE_PK.split(",") if col.strip()]
+
+            log.info('INFO ==========> primary_key_columns: {} ==========>'.format(primary_key_columns))
+
+            return source_df, primary_key_columns
