@@ -3,54 +3,75 @@ import re
 class sourceTargetCompare():
 
     def _clean_query(self, query: str) -> str:
-        """Clean query — remove BOM, normalize whitespace."""
+        """
+        Aggressively clean query loaded from config/file.
+        Removes BOM, hidden chars, normalizes whitespace.
+        """
+        # Remove BOM character if present
         q = query.lstrip('\ufeff')
+
+        # Remove Windows line endings
         q = q.replace('\r\n', ' ').replace('\r', ' ').replace('\n', ' ')
+
+        # Normalize multiple spaces to single space
         q = re.sub(r'\s+', ' ', q)
+
+        # Strip and remove trailing semicolons
         q = q.strip().rstrip(';').strip()
+
         print(f"[clean_query] Cleaned: {repr(q[:100])}")
         return q
 
 
     def _remove_nolock_hints(self, query: str) -> str:
         """
-        Remove all WITH(NOLOCK) / WITH (NOLOCK) table hints from query.
-        These are SQL Server specific hints not needed in subqueries
-        and cause syntax errors when query is wrapped.
-        
-        Removes:
+        Remove ALL WITH(...) table hints from query.
+        Handles:
             WITH(NOLOCK)
             WITH (NOLOCK)
             with(nolock)
-            WITH(NOLOCK, INDEX(1))  ← any hint inside WITH()
+            WITH( NOLOCK )
+            WITH(NOLOCK, NOWAIT)
+            WITH(INDEX(1))
         """
-        # Remove WITH(...) table hints — case insensitive
+        print(f"[remove_nolock] Before: {repr(query[:150])}")
+
+        # Remove WITH(...) — matches anything inside parentheses
         cleaned = re.sub(
-            r'\bWITH\s*\(\s*\w+[\w\s,]*\)',
+            r'\bWITH\s*\([^)]*\)',
             '',
             query,
             flags=re.IGNORECASE
         )
-        # Clean up any extra spaces left behind
+
+        # Clean up extra whitespace left behind
         cleaned = re.sub(r'\s+', ' ', cleaned).strip()
-        print(f"[remove_nolock] After removal: {repr(cleaned[:100])}")
+
+        print(f"[remove_nolock] After : {repr(cleaned[:150])}")
         return cleaned
 
 
     def _is_cte_query(self, query: str) -> bool:
         """
         Strictly detects TRUE CTE query.
-        WITH CTE_Name AS (  →  True
-        WITH(NOLOCK)        →  False
-        SELECT ...          →  False
+
+        WITH CTE_Name AS (  →  True  (real CTE)
+        WITH(NOLOCK)        →  False (table hint)
+        SELECT ...          →  False (plain query)
+        schema.table        →  False (plain table)
         """
         q = self._clean_query(query)
+
         print(f"[is_cte] Checking: {repr(q[:100])}")
+
+        # TRUE CTE must match: WITH <word> AS (
+        # Table hint matches:  WITH( — bracket immediately after WITH
         result = bool(re.match(
             r"^;?WITH\s+\w+\s+AS\s*\(",
             q,
             re.IGNORECASE
         ))
+
         print(f"[is_cte] Is CTE: {result}")
         return result
 
@@ -58,22 +79,25 @@ class sourceTargetCompare():
     def _wrap_query(self, query: str) -> str:
         """
         Master entry point for all query types.
+
         Handles:
           1. Plain table name           → return as-is
           2. Already wrapped query      → return as-is
-          3. TRUE CTE query             → convert CTE to subquery
-          4. Plain SELECT               → wrap in () AS spark_jdbc_wrapper
-          5. SELECT with WITH(NOLOCK)   → remove hints + wrap
+          3. TRUE CTE query             → convert CTE to subquery + remove hints
+          4. Plain SELECT               → remove hints + wrap in ()
+          5. SELECT with WITH(NOLOCK)   → remove hints + wrap in ()
         """
+        # Step 1: Clean the query
         q = self._clean_query(query)
+
         print(f"[wrap_query] Input (first 100): {repr(q[:100])}")
 
-        # Case 1: Plain table name
+        # Case 1: Plain table name — schema.table or [db].[schema].[table]
         if re.match(r"^[\w\.\[\]]+$", q):
             print("[wrap_query] Case: Plain table name — returning as-is")
             return q
 
-        # Case 2: Already correctly wrapped
+        # Case 2: Already correctly wrapped with alias
         if re.match(r"^\(.*\)\s+AS\s+\w+\s*$", q, re.DOTALL | re.IGNORECASE):
             print("[wrap_query] Case: Already wrapped — returning as-is")
             return q
@@ -82,48 +106,67 @@ class sourceTargetCompare():
         if self._is_cte_query(q):
             print("[wrap_query] Case: CTE query — converting to subquery")
             try:
+                # Convert CTE to subquery
                 converted = self._parse_and_convert_cte(q)
-                # ✅ KEY FIX: Remove WITH(NOLOCK) from converted query
+                # Remove all WITH(NOLOCK) hints from converted query
                 converted = self._remove_nolock_hints(converted)
+                print(f"[wrap_query] Final CTE query: {repr(converted[:150])}")
                 return converted
             except Exception as e:
-                print(f"[wrap_query] CTE conversion failed: {e} — falling back")
+                print(f"[wrap_query] CTE conversion failed: {e} — falling back to plain wrap")
                 q_clean = self._remove_nolock_hints(q)
                 return f"({q_clean}) AS spark_jdbc_wrapper"
 
-        # Case 4 & 5: Plain SELECT or WITH(NOLOCK) query
+        # Case 4 & 5: Plain SELECT or SELECT with WITH(NOLOCK)
         print("[wrap_query] Case: Plain SELECT or WITH(NOLOCK) — removing hints and wrapping")
-        # ✅ KEY FIX: Remove WITH(NOLOCK) before wrapping
         q_clean = self._remove_nolock_hints(q)
+        print(f"[wrap_query] After hint removal: {repr(q_clean[:150])}")
         return f"({q_clean}) AS spark_jdbc_wrapper"
 
 
     def _parse_and_convert_cte(self, q: str) -> str:
         """
         Converts CTE query to equivalent nested subquery.
+
+        Input:
+            WITH cte1 AS (SELECT ...),
+                 cte2 AS (SELECT ... FROM cte1 ...)
+            SELECT ... FROM cte2 alias
+
+        Output:
+            (SELECT ... FROM
+                (SELECT ... FROM
+                    (SELECT ...) AS cte1
+                ) AS alias
+            ) AS spark_jdbc_wrapper
         """
+        # Clean again to be safe
         q = self._clean_query(q)
 
-        # Step 1: Skip past WITH keyword
+        # --- Step 1: Skip past WITH keyword ---
         with_match = re.match(r"^;?WITH\s+", q, re.IGNORECASE)
         if not with_match:
             raise ValueError("No WITH keyword found")
         pos = with_match.end()
 
-        # Step 2: Parse each CTE name and body
-        cte_dict  = {}
-        cte_order = []
+        # --- Step 2: Parse each CTE name and body ---
+        cte_dict  = {}   # { cte_name : cte_body }
+        cte_order = []   # preserve order for substitution
 
         while pos < len(q):
+
+            # Match next CTE: name AS (
             name_match = re.match(r"\s*(\w+)\s+AS\s*\(", q[pos:], re.IGNORECASE)
             if not name_match:
                 break
 
             cte_name = name_match.group(1)
             cte_order.append(cte_name)
+
+            # Start scanning after opening parenthesis
             body_start = pos + name_match.end()
 
-            # Track depth to find matching closing parenthesis
+            # Use depth counter to find matching closing parenthesis
             depth = 1
             j = body_start
             while j < len(q) and depth > 0:
@@ -133,19 +176,23 @@ class sourceTargetCompare():
                     depth -= 1
                 j += 1
 
+            # Extract CTE body — everything between outer ( and )
             cte_body = q[body_start: j - 1].strip()
             cte_dict[cte_name] = cte_body
+
             print(f"[parse_cte] Found CTE '{cte_name}': {repr(cte_body[:80])}")
 
+            # Move past closing ) — skip comma if more CTEs follow
             pos = j
             comma_match = re.match(r"\s*,\s*", q[pos:])
             if comma_match:
                 pos += comma_match.end()
             else:
-                break
+                break  # No more CTEs
 
-        # Step 3: Find the final SELECT
+        # --- Step 3: Find the final SELECT after all CTEs ---
         remaining = q[pos:].strip()
+
         if re.match(r"^SELECT\s+", remaining, re.IGNORECASE):
             final_select = remaining
         else:
@@ -153,11 +200,12 @@ class sourceTargetCompare():
             if select_match:
                 final_select = remaining[select_match.start():].strip()
             else:
-                raise ValueError("Could not find final SELECT")
+                raise ValueError("Could not find final SELECT after CTE definitions")
 
         print(f"[parse_cte] Final SELECT: {repr(final_select[:80])}")
 
-        # Step 4: Resolve CTEs referencing earlier CTEs
+        # --- Step 4: Resolve CTEs that reference earlier CTEs ---
+        # Process in order — inner CTEs resolved before outer ones
         for i, cte_name in enumerate(cte_order):
             body = cte_dict[cte_name]
             for earlier_cte in cte_order[:i]:
@@ -173,7 +221,9 @@ class sourceTargetCompare():
                 )
             cte_dict[cte_name] = body
 
-        # Step 5: Replace CTE references in final SELECT
+        # --- Step 5: Replace CTE references in final SELECT ---
+        # Captures optional alias after CTE name
+        # Skips SQL keywords that follow CTE name
         result_sql = final_select
         for cte_name in cte_order:
             result_sql = re.sub(
@@ -188,20 +238,24 @@ class sourceTargetCompare():
             )
 
         final_query = f"({result_sql}) AS spark_jdbc_wrapper"
+
         print("======= FINAL CONVERTED QUERY =======")
         print(final_query)
         print("=====================================")
+
         return final_query
 
 
     def handler(self):
         log.info('INFO ==========> connecting the source ===========>')
+
         try:
+            # Apply generic query wrapper — handles all query types
             wrapped_query = self._wrap_query(self.SOURCE_QUERY)
 
-            print("======= QUERY SENT TO SPARK =======")
+            print("======= FINAL QUERY SENT TO SPARK =======")
             print(wrapped_query)
-            print("===================================")
+            print("=========================================")
 
             source_df = spark.read.format("jdbc") \
                 .option("url",           self.SOURCE_URL) \
@@ -213,27 +267,8 @@ class sourceTargetCompare():
                 .option("driver",        driver) \
                 .load()
 
-            log.info('INFO ==========> data extracted successfully ===========>')
+            log.info('INFO ==========> data extracted successfully from source ===========>')
 
         except Exception as e:
             log.error(f"Exception is identified - please check error message :{str(e)}")
             raise
-```
-
----
-
-## What Changed
-
-The **only key fix** is `_remove_nolock_hints()` called in all paths:
-```
-Query with WITH(NOLOCK)
-         │
-         ▼
-_remove_nolock_hints()
-         │
-         ▼
-FROM tbl CBD WITH(NOLOCK)   →   FROM tbl CBD
-JOIN tbl BUS WITH(NOLOCK)   →   JOIN tbl BUS
-         │
-         ▼
-(cleaned query) AS spark_jdbc_wrapper  ✅
