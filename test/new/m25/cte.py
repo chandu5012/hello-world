@@ -4,129 +4,56 @@ class sourceTargetCompare():
 
     def _clean_query(self, query: str) -> str:
         """
-        Aggressively clean query loaded from config/file.
-        Removes BOM, hidden chars, normalizes whitespace.
+        Clean query — remove BOM, normalize line endings and whitespace.
         """
-        # Remove BOM character if present
         q = query.lstrip('\ufeff')
-
-        # Remove Windows line endings
         q = q.replace('\r\n', ' ').replace('\r', ' ').replace('\n', ' ')
-
-        # Normalize multiple spaces to single space
         q = re.sub(r'\s+', ' ', q)
-
-        # Strip and remove trailing semicolons
         q = q.strip().rstrip(';').strip()
-
-        print(f"[clean_query] Cleaned: {repr(q[:100])}")
+        print(f"[clean_query] Result: {repr(q[:150])}")
         return q
 
 
     def _remove_nolock_hints(self, query: str) -> str:
         """
-        Remove ALL WITH(...) table hints from query.
-        Handles:
-            WITH(NOLOCK)
-            WITH (NOLOCK)
-            with(nolock)
-            WITH( NOLOCK )
-            WITH(NOLOCK, NOWAIT)
-            WITH(INDEX(1))
+        Remove ALL WITH(...) table hints.
+        Handles: WITH(NOLOCK), WITH (NOLOCK), with(nolock),
+                 WITH(NOLOCK, NOWAIT), WITH(INDEX(1)) etc.
         """
         print(f"[remove_nolock] Before: {repr(query[:150])}")
-
-        # Remove WITH(...) — matches anything inside parentheses
+        # [^)]* matches anything inside () — most aggressive pattern
         cleaned = re.sub(
             r'\bWITH\s*\([^)]*\)',
             '',
             query,
             flags=re.IGNORECASE
         )
-
-        # Clean up extra whitespace left behind
         cleaned = re.sub(r'\s+', ' ', cleaned).strip()
-
         print(f"[remove_nolock] After : {repr(cleaned[:150])}")
         return cleaned
 
 
     def _is_cte_query(self, query: str) -> bool:
         """
-        Strictly detects TRUE CTE query.
-
-        WITH CTE_Name AS (  →  True  (real CTE)
-        WITH(NOLOCK)        →  False (table hint)
-        SELECT ...          →  False (plain query)
-        schema.table        →  False (plain table)
+        Strictly detect TRUE CTE query.
+        WITH CTE_Name AS (  →  True
+        WITH(NOLOCK)        →  False
+        SELECT ...          →  False
+        schema.table        →  False
         """
         q = self._clean_query(query)
-
-        print(f"[is_cte] Checking: {repr(q[:100])}")
-
-        # TRUE CTE must match: WITH <word> AS (
-        # Table hint matches:  WITH( — bracket immediately after WITH
         result = bool(re.match(
             r"^;?WITH\s+\w+\s+AS\s*\(",
             q,
             re.IGNORECASE
         ))
-
-        print(f"[is_cte] Is CTE: {result}")
+        print(f"[is_cte] Result={result} for: {repr(q[:80])}")
         return result
-
-
-    def _wrap_query(self, query: str) -> str:
-        """
-        Master entry point for all query types.
-
-        Handles:
-          1. Plain table name           → return as-is
-          2. Already wrapped query      → return as-is
-          3. TRUE CTE query             → convert CTE to subquery + remove hints
-          4. Plain SELECT               → remove hints + wrap in ()
-          5. SELECT with WITH(NOLOCK)   → remove hints + wrap in ()
-        """
-        # Step 1: Clean the query
-        q = self._clean_query(query)
-
-        print(f"[wrap_query] Input (first 100): {repr(q[:100])}")
-
-        # Case 1: Plain table name — schema.table or [db].[schema].[table]
-        if re.match(r"^[\w\.\[\]]+$", q):
-            print("[wrap_query] Case: Plain table name — returning as-is")
-            return q
-
-        # Case 2: Already correctly wrapped with alias
-        if re.match(r"^\(.*\)\s+AS\s+\w+\s*$", q, re.DOTALL | re.IGNORECASE):
-            print("[wrap_query] Case: Already wrapped — returning as-is")
-            return q
-
-        # Case 3: TRUE CTE query — convert to subquery
-        if self._is_cte_query(q):
-            print("[wrap_query] Case: CTE query — converting to subquery")
-            try:
-                # Convert CTE to subquery
-                converted = self._parse_and_convert_cte(q)
-                # Remove all WITH(NOLOCK) hints from converted query
-                converted = self._remove_nolock_hints(converted)
-                print(f"[wrap_query] Final CTE query: {repr(converted[:150])}")
-                return converted
-            except Exception as e:
-                print(f"[wrap_query] CTE conversion failed: {e} — falling back to plain wrap")
-                q_clean = self._remove_nolock_hints(q)
-                return f"({q_clean}) AS spark_jdbc_wrapper"
-
-        # Case 4 & 5: Plain SELECT or SELECT with WITH(NOLOCK)
-        print("[wrap_query] Case: Plain SELECT or WITH(NOLOCK) — removing hints and wrapping")
-        q_clean = self._remove_nolock_hints(q)
-        print(f"[wrap_query] After hint removal: {repr(q_clean[:150])}")
-        return f"({q_clean}) AS spark_jdbc_wrapper"
 
 
     def _parse_and_convert_cte(self, q: str) -> str:
         """
-        Converts CTE query to equivalent nested subquery.
+        Convert CTE query to equivalent nested subquery.
 
         Input:
             WITH cte1 AS (SELECT ...),
@@ -135,38 +62,32 @@ class sourceTargetCompare():
 
         Output:
             (SELECT ... FROM
-                (SELECT ... FROM
-                    (SELECT ...) AS cte1
-                ) AS alias
+                (SELECT ... FROM (SELECT ...) AS cte1) AS alias
             ) AS spark_jdbc_wrapper
         """
-        # Clean again to be safe
         q = self._clean_query(q)
 
-        # --- Step 1: Skip past WITH keyword ---
+        # Step 1: Skip past WITH keyword
         with_match = re.match(r"^;?WITH\s+", q, re.IGNORECASE)
         if not with_match:
             raise ValueError("No WITH keyword found")
         pos = with_match.end()
 
-        # --- Step 2: Parse each CTE name and body ---
-        cte_dict  = {}   # { cte_name : cte_body }
-        cte_order = []   # preserve order for substitution
+        # Step 2: Parse each CTE name and body using depth tracking
+        cte_dict  = {}  # { cte_name: cte_body }
+        cte_order = []  # preserve definition order
 
         while pos < len(q):
-
-            # Match next CTE: name AS (
+            # Match: cte_name AS (
             name_match = re.match(r"\s*(\w+)\s+AS\s*\(", q[pos:], re.IGNORECASE)
             if not name_match:
                 break
 
             cte_name = name_match.group(1)
             cte_order.append(cte_name)
-
-            # Start scanning after opening parenthesis
             body_start = pos + name_match.end()
 
-            # Use depth counter to find matching closing parenthesis
+            # Find matching closing ) using depth counter
             depth = 1
             j = body_start
             while j < len(q) and depth > 0:
@@ -176,23 +97,20 @@ class sourceTargetCompare():
                     depth -= 1
                 j += 1
 
-            # Extract CTE body — everything between outer ( and )
             cte_body = q[body_start: j - 1].strip()
             cte_dict[cte_name] = cte_body
-
             print(f"[parse_cte] Found CTE '{cte_name}': {repr(cte_body[:80])}")
 
-            # Move past closing ) — skip comma if more CTEs follow
+            # Move past closing ) — skip comma if more CTEs
             pos = j
             comma_match = re.match(r"\s*,\s*", q[pos:])
             if comma_match:
                 pos += comma_match.end()
             else:
-                break  # No more CTEs
+                break
 
-        # --- Step 3: Find the final SELECT after all CTEs ---
+        # Step 3: Find final SELECT after all CTEs
         remaining = q[pos:].strip()
-
         if re.match(r"^SELECT\s+", remaining, re.IGNORECASE):
             final_select = remaining
         else:
@@ -200,12 +118,11 @@ class sourceTargetCompare():
             if select_match:
                 final_select = remaining[select_match.start():].strip()
             else:
-                raise ValueError("Could not find final SELECT after CTE definitions")
+                raise ValueError("Could not find final SELECT after CTEs")
 
         print(f"[parse_cte] Final SELECT: {repr(final_select[:80])}")
 
-        # --- Step 4: Resolve CTEs that reference earlier CTEs ---
-        # Process in order — inner CTEs resolved before outer ones
+        # Step 4: Resolve CTEs that reference earlier CTEs
         for i, cte_name in enumerate(cte_order):
             body = cte_dict[cte_name]
             for earlier_cte in cte_order[:i]:
@@ -221,9 +138,8 @@ class sourceTargetCompare():
                 )
             cte_dict[cte_name] = body
 
-        # --- Step 5: Replace CTE references in final SELECT ---
-        # Captures optional alias after CTE name
-        # Skips SQL keywords that follow CTE name
+        # Step 5: Replace CTE references in final SELECT
+        # Skip SQL keywords that may follow a CTE name
         result_sql = final_select
         for cte_name in cte_order:
             result_sql = re.sub(
@@ -237,20 +153,55 @@ class sourceTargetCompare():
                 flags=re.IGNORECASE
             )
 
-        final_query = f"({result_sql}) AS spark_jdbc_wrapper"
+        return f"({result_sql}) AS spark_jdbc_wrapper"
 
-        print("======= FINAL CONVERTED QUERY =======")
-        print(final_query)
-        print("=====================================")
 
-        return final_query
+    def _wrap_query(self, query: str) -> str:
+        """
+        Master entry point — handles ALL query types:
+          1. Plain table name           → return as-is
+          2. Already wrapped query      → return as-is
+          3. TRUE CTE query             → convert + remove hints
+          4. Plain SELECT               → remove hints + wrap
+          5. SELECT with WITH(NOLOCK)   → remove hints + wrap
+        """
+        q = self._clean_query(query)
+        print(f"[wrap_query] Input: {repr(q[:100])}")
+
+        # Case 1: Plain table — schema.table or [db].[schema].[table]
+        if re.match(r"^[\w\.\[\]]+$", q):
+            print("[wrap_query] → Plain table name")
+            return q
+
+        # Case 2: Already wrapped
+        if re.match(r"^\(.*\)\s+AS\s+\w+\s*$", q, re.DOTALL | re.IGNORECASE):
+            print("[wrap_query] → Already wrapped")
+            return q
+
+        # Case 3: TRUE CTE query
+        if self._is_cte_query(q):
+            print("[wrap_query] → CTE query — converting")
+            try:
+                converted = self._parse_and_convert_cte(q)
+                # Always remove WITH(NOLOCK) from final output
+                final = self._remove_nolock_hints(converted)
+                print(f"[wrap_query] Final: {repr(final[:150])}")
+                return final
+            except Exception as e:
+                print(f"[wrap_query] CTE failed: {e} — fallback to plain wrap")
+                return f"({self._remove_nolock_hints(q)}) AS spark_jdbc_wrapper"
+
+        # Case 4 & 5: Plain SELECT or WITH(NOLOCK) query
+        print("[wrap_query] → Plain SELECT / WITH(NOLOCK) — removing hints")
+        q_clean = self._remove_nolock_hints(q)
+        return f"({q_clean}) AS spark_jdbc_wrapper"
 
 
     def handler(self):
         log.info('INFO ==========> connecting the source ===========>')
 
         try:
-            # Apply generic query wrapper — handles all query types
+            # Wrap query — handles all query types generically
             wrapped_query = self._wrap_query(self.SOURCE_QUERY)
 
             print("======= FINAL QUERY SENT TO SPARK =======")
@@ -267,8 +218,8 @@ class sourceTargetCompare():
                 .option("driver",        driver) \
                 .load()
 
-            log.info('INFO ==========> data extracted successfully from source ===========>')
+            log.info('INFO ==========> data extracted successfully ===========>')
 
         except Exception as e:
-            log.error(f"Exception is identified - please check error message :{str(e)}")
+            log.error(f"Exception is identified - please check error message: {str(e)}")
             raise
