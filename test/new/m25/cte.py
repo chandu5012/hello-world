@@ -4,12 +4,19 @@ class sourceTargetCompare():
 
     def _clean_query(self, query: str) -> str:
         """
-        Clean query — remove BOM, normalize line endings and whitespace.
+        Clean query — remove BOM, normalize whitespace,
+        and remove ALL semicolons (inside and at end).
         """
         q = query.lstrip('\ufeff')
         q = q.replace('\r\n', ' ').replace('\r', ' ').replace('\n', ' ')
         q = re.sub(r'\s+', ' ', q)
-        q = q.strip().rstrip(';').strip()
+        q = q.strip()
+
+        # ✅ KEY FIX: Remove ALL semicolons not just trailing
+        # Semicolons inside wrapped query cause "near ')'" error
+        q = q.replace(';', '')
+        q = q.strip()
+
         print(f"[clean_query] Result: {repr(q[:150])}")
         return q
 
@@ -21,7 +28,6 @@ class sourceTargetCompare():
                  WITH(NOLOCK, NOWAIT), WITH(INDEX(1)) etc.
         """
         print(f"[remove_nolock] Before: {repr(query[:150])}")
-        # [^)]* matches anything inside () — most aggressive pattern
         cleaned = re.sub(
             r'\bWITH\s*\([^)]*\)',
             '',
@@ -51,19 +57,50 @@ class sourceTargetCompare():
         return result
 
 
+    def _wrap_query(self, query: str) -> str:
+        """
+        Master entry point — handles ALL query types:
+          1. Plain table name           → return as-is
+          2. Already wrapped query      → return as-is
+          3. TRUE CTE query             → convert + remove hints
+          4. Plain SELECT               → remove hints + wrap
+          5. SELECT with WITH(NOLOCK)   → remove hints + wrap
+        """
+        # Step 1: Clean the query — removes semicolons, BOM, whitespace
+        q = self._clean_query(query)
+        print(f"[wrap_query] Input: {repr(q[:100])}")
+
+        # Case 1: Plain table name — schema.table or [db].[schema].[table]
+        if re.match(r"^[\w\.\[\]]+$", q):
+            print("[wrap_query] → Plain table name")
+            return q
+
+        # Case 2: Already correctly wrapped with alias
+        if re.match(r"^\(.*\)\s+AS\s+\w+\s*$", q, re.DOTALL | re.IGNORECASE):
+            print("[wrap_query] → Already wrapped")
+            return q
+
+        # Case 3: TRUE CTE query — convert to subquery
+        if self._is_cte_query(q):
+            print("[wrap_query] → CTE query — converting")
+            try:
+                converted = self._parse_and_convert_cte(q)
+                final = self._remove_nolock_hints(converted)
+                print(f"[wrap_query] CTE Final: {repr(final[:150])}")
+                return final
+            except Exception as e:
+                print(f"[wrap_query] CTE failed: {e} — fallback")
+                return f"({self._remove_nolock_hints(q)}) AS spark_jdbc_wrapper"
+
+        # Case 4 & 5: Plain SELECT or WITH(NOLOCK)
+        print("[wrap_query] → Plain SELECT / WITH(NOLOCK) — removing hints")
+        q_clean = self._remove_nolock_hints(q)
+        return f"({q_clean}) AS spark_jdbc_wrapper"
+
+
     def _parse_and_convert_cte(self, q: str) -> str:
         """
-        Convert CTE query to equivalent nested subquery.
-
-        Input:
-            WITH cte1 AS (SELECT ...),
-                 cte2 AS (SELECT ... FROM cte1 ...)
-            SELECT ... FROM cte2 alias
-
-        Output:
-            (SELECT ... FROM
-                (SELECT ... FROM (SELECT ...) AS cte1) AS alias
-            ) AS spark_jdbc_wrapper
+        Converts CTE query to equivalent nested subquery.
         """
         q = self._clean_query(q)
 
@@ -73,12 +110,11 @@ class sourceTargetCompare():
             raise ValueError("No WITH keyword found")
         pos = with_match.end()
 
-        # Step 2: Parse each CTE name and body using depth tracking
-        cte_dict  = {}  # { cte_name: cte_body }
-        cte_order = []  # preserve definition order
+        # Step 2: Parse each CTE name and body
+        cte_dict  = {}
+        cte_order = []
 
         while pos < len(q):
-            # Match: cte_name AS (
             name_match = re.match(r"\s*(\w+)\s+AS\s*\(", q[pos:], re.IGNORECASE)
             if not name_match:
                 break
@@ -101,7 +137,6 @@ class sourceTargetCompare():
             cte_dict[cte_name] = cte_body
             print(f"[parse_cte] Found CTE '{cte_name}': {repr(cte_body[:80])}")
 
-            # Move past closing ) — skip comma if more CTEs
             pos = j
             comma_match = re.match(r"\s*,\s*", q[pos:])
             if comma_match:
@@ -118,11 +153,11 @@ class sourceTargetCompare():
             if select_match:
                 final_select = remaining[select_match.start():].strip()
             else:
-                raise ValueError("Could not find final SELECT after CTEs")
+                raise ValueError("Could not find final SELECT")
 
         print(f"[parse_cte] Final SELECT: {repr(final_select[:80])}")
 
-        # Step 4: Resolve CTEs that reference earlier CTEs
+        # Step 4: Resolve CTEs referencing earlier CTEs
         for i, cte_name in enumerate(cte_order):
             body = cte_dict[cte_name]
             for earlier_cte in cte_order[:i]:
@@ -139,7 +174,6 @@ class sourceTargetCompare():
             cte_dict[cte_name] = body
 
         # Step 5: Replace CTE references in final SELECT
-        # Skip SQL keywords that may follow a CTE name
         result_sql = final_select
         for cte_name in cte_order:
             result_sql = re.sub(
@@ -156,63 +190,35 @@ class sourceTargetCompare():
         return f"({result_sql}) AS spark_jdbc_wrapper"
 
 
-    def _wrap_query(self, query: str) -> str:
-        """
-        Master entry point — handles ALL query types:
-          1. Plain table name           → return as-is
-          2. Already wrapped query      → return as-is
-          3. TRUE CTE query             → convert + remove hints
-          4. Plain SELECT               → remove hints + wrap
-          5. SELECT with WITH(NOLOCK)   → remove hints + wrap
-        """
-        q = self._clean_query(query)
-        print(f"[wrap_query] Input: {repr(q[:100])}")
-
-        # Case 1: Plain table — schema.table or [db].[schema].[table]
-        if re.match(r"^[\w\.\[\]]+$", q):
-            print("[wrap_query] → Plain table name")
-            return q
-
-        # Case 2: Already wrapped
-        if re.match(r"^\(.*\)\s+AS\s+\w+\s*$", q, re.DOTALL | re.IGNORECASE):
-            print("[wrap_query] → Already wrapped")
-            return q
-
-        # Case 3: TRUE CTE query
-        if self._is_cte_query(q):
-            print("[wrap_query] → CTE query — converting")
-            try:
-                converted = self._parse_and_convert_cte(q)
-                # Always remove WITH(NOLOCK) from final output
-                final = self._remove_nolock_hints(converted)
-                print(f"[wrap_query] Final: {repr(final[:150])}")
-                return final
-            except Exception as e:
-                print(f"[wrap_query] CTE failed: {e} — fallback to plain wrap")
-                return f"({self._remove_nolock_hints(q)}) AS spark_jdbc_wrapper"
-
-        # Case 4 & 5: Plain SELECT or WITH(NOLOCK) query
-        print("[wrap_query] → Plain SELECT / WITH(NOLOCK) — removing hints")
-        q_clean = self._remove_nolock_hints(q)
-        return f"({q_clean}) AS spark_jdbc_wrapper"
-
-
     def handler(self):
         log.info('INFO ==========> connecting the source ===========>')
 
         try:
-            # Wrap query — handles all query types generically
-            wrapped_query = self._wrap_query(self.SOURCE_QUERY)
+            # ✅ Apply _wrap_query to BOTH source and target
+            wrapped_source = self._wrap_query(self.SOURCE_QUERY)
+            wrapped_target = self._wrap_query(self.TARGET_QUERY)
 
-            print("======= FINAL QUERY SENT TO SPARK =======")
-            print(wrapped_query)
-            print("=========================================")
+            print("======= SOURCE QUERY SENT TO SPARK =======")
+            print(wrapped_source)
+            print("======= TARGET QUERY SENT TO SPARK =======")
+            print(wrapped_target)
+            print("==========================================")
 
             source_df = spark.read.format("jdbc") \
                 .option("url",           self.SOURCE_URL) \
-                .option("dbtable",       wrapped_query) \
+                .option("dbtable",       wrapped_source) \
                 .option("user",          self.SOURCE_USER) \
                 .option("password",      self.SOURCE_PSWD) \
+                .option("numPartitions", 4) \
+                .option("fetchsize",     100000) \
+                .option("driver",        driver) \
+                .load()
+
+            target_df = spark.read.format("jdbc") \
+                .option("url",           self.TARGET_URL) \
+                .option("dbtable",       wrapped_target) \
+                .option("user",          self.TARGET_USER) \
+                .option("password",      self.TARGET_PSWD) \
                 .option("numPartitions", 4) \
                 .option("fetchsize",     100000) \
                 .option("driver",        driver) \
