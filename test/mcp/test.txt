@@ -1,0 +1,11 @@
+Read the Excel file from:
+filename
+
+Open this URL:
+url
+
+Fill only the "Data Comparison" tab using the Excel sheet "DataComparison_Input".
+Read ALL field values including passwords directly from Row 2 of that sheet.
+For dropdowns select the closest matching option.
+For null/empty values leave the field as default.
+After filling all fields, wait for my confirmation before clicking Execute.
